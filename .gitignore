@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.env
+*.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# FastAPI (Python web frameworks)
+*.log
+
+# VSCode
+*.code-workspace
+.vscode/
+.history/
+
+# PostgreSQL
+*.pgsql
+*.sql
+*.db
+*.sqlite3
+*.psql
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Pipenv
+Pipfile.lock
+
+# Virtualenv
+*.env
+
+# Test and coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+*.hypothesis/
+.pytest_cache/
+

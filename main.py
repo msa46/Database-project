@@ -1,6 +1,17 @@
-def main():
-    print("Hello from database-project!")
+from typing import Union
+
+from fastapi import FastAPI
+from src.database.db import init_db
+
+app = FastAPI()
+init_db()
 
 
-if __name__ == "__main__":
-    main()
+@app.get("/")
+def read_root():
+    return {"Hello": "World"}
+
+
+@app.get("/items/{item_id}")
+def read_item(item_id: int, q: Union[str, None] = None):
+    return {"item_id": item_id, "q": q}

@@ -1,37 +1,26 @@
 from datetime import datetime, date, time
 from enum import Enum
-from pony.orm import Required, PrimaryKey, Optional, Set
+from pony.orm import Required, PrimaryKey, Optional, Set, db_session
 from .db import db
 
 import re
 
 
-def validate_phone(phone):
-    clean = re.sub(r'[^\d+]', '', phone)
-    if clean.startswith('+'):
-        if not re.match(r'^\+[1-9][0-9]{6,14}$', clean):
-            raise ValueError("Invalid international phone format")
-    else:
-        if not re.match(r'^[0-9]{10}$', clean):
-            raise ValueError("Domestic phone must be exactly 10 digits")
-    
-    return phone
-
-class IngredientType(Enum):
+class IngredientType(str, Enum):
     Vegan = "Vegan"
     Vegetarian = "Vegetarian"
     Normal = "Normal"
 
-class ExtraType(Enum):
+class ExtraType(str, Enum):
     Drink = "Drink"
     Dessert = "Dessert"
 
-class DeliveryStatus(Enum):
+class DeliveryStatus(str, Enum):
     Available = "Available"
     On_Delivery = "On Delivery"
     Off_Duty = "Off Duty"
 
-class OrderStatus(Enum):
+class OrderStatus(str, Enum):
     Pending = "Pending"
     In_Progress = "In Progress"
     Delivered = "Delivered"
@@ -74,9 +63,20 @@ class User(db.Entity):
     birthdate = Optional(date)
     address = Optional(str)
     postalCode = Optional(str)
-    phone = Optional(str, py_check=lambda x: validate_phone(x))
+    phone = Optional(str)
     orders = Set("Order")
+    discount_code = Optional("DiscountCode")
     Gender = Optional(str)
+    
+    def validate_phone(self):
+        if self.phone:
+            clean = re.sub(r'[^\d+]', '', self.phone)
+            if clean.startswith('+'):
+                if not re.match(r'^\+[1-9][0-9]{6,14}$', clean):
+                    raise ValueError("Invalid international phone format")
+            else:
+                if not re.match(r'^[0-9]{10}$', clean):
+                    raise ValueError("Domestic phone must be exactly 10 digits")
 
 
 
@@ -108,4 +108,4 @@ class DiscountCode(db.Entity):
     valid_until = Required(datetime)
     valid_from = Optional(datetime)
     used = Required(bool, default=False)
-    # users = Set(User)
+    used_by = Optional(User)

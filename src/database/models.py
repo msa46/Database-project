@@ -1,7 +1,7 @@
 from datetime import datetime, date, time
 from enum import Enum
 from pony.orm import Required, PrimaryKey, Optional, Set
-from db import db
+from .db import db
 
 import re
 
@@ -56,15 +56,15 @@ class Extra(db.Entity):
     name = Required(str)
     price = Required(float)
     order = Set("Order")
-    type = Required(ExtraType, py_type=ExtraType)
+    type = Required(py_type=ExtraType, sql_type='VARCHAR')
 
 
 class Ingredient(db.Entity):
     id = PrimaryKey(int, auto=True)
     name = Required(str)
     price = Required(float)
-    type = Required(IngredientType, py_type=IngredientType)
-    pizza = set(Pizza)
+    type = Required(py_type=IngredientType, sql_type='VARCHAR')
+    pizza = Set("Pizza")
 
 
 class User(db.Entity):
@@ -88,15 +88,15 @@ class Employee(User):
     salary = Required(float)
 
 class DeliveryPerson(Employee):
-    status = Required(DeliveryStatus, py_type=DeliveryStatus) 
-    orders = Set("Order")
+    status = Required(py_type=DeliveryStatus, sql_type='VARCHAR') 
+    delivered_orders = Set("Order")
 
 class Order(db.Entity):
     id = PrimaryKey(int, auto=True)
     user = Required(User)
     Pizzas = Set("OrderPizzaRelation")
     extras = Set(Extra)
-    status = Required(OrderStatus, py_type=OrderStatus)
+    status = Required(py_type=OrderStatus, sql_type='VARCHAR')
     created_at = Required(datetime, default=datetime.now)
     delivered_at = Optional(datetime)
     delivery_person = Optional(DeliveryPerson)

@@ -4,7 +4,10 @@ from fastapi import FastAPI
 from src.database.db import init_db
 
 app = FastAPI()
+
+print("Initializing database...")
 init_db()
+print("Database initialization complete.")
 
 
 @app.get("/")

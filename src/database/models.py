@@ -1,9 +1,15 @@
 from datetime import datetime, date, time
 from enum import Enum
-from pony.orm import Required, PrimaryKey, Optional, Set, db_session
+from pony.orm import Required, PrimaryKey, Optional, Set, db_session, Index
 from .db import db
 
 import re
+import os
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.backends import default_backend
+import secrets
+import base64
 
 
 class IngredientType(str, Enum):
@@ -67,6 +73,64 @@ class User(db.Entity):
     orders = Set("Order")
     discount_code = Optional("DiscountCode")
     Gender = Optional(str)
+    password_hash = Required(str)
+    salt = Required(str)  # Store the unique salt for each user
+
+    @staticmethod
+    def _get_pepper():
+        return os.getenv("PASSWORD_PEPPER", "default_pepper_change_in_production")
+
+    @staticmethod
+    def hash_password(password: str) -> tuple[str, str]:
+     
+        salt = secrets.token_bytes(32)
+        salt_b64 = base64.b64encode(salt).decode('utf-8')
+        pepper = User._get_pepper()
+        password_with_pepper = password + pepper
+
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=1000
+            backend=default_backend()
+        )
+        key = kdf.derive(password_with_pepper.encode('utf-8'))
+        hashed_password = base64.b64encode(key).decode('utf-8')
+
+        return hashed_password, salt_b64
+
+    @staticmethod
+    def verify_password(password: str, hashed_password: str, salt: str) -> bool:
+
+        try:
+            salt_bytes = base64.b64decode(salt)
+
+            pepper = User._get_pepper()
+            password_with_pepper = password + pepper
+
+            kdf = PBKDF2HMAC(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=salt_bytes,
+                iterations=1000,
+                backend=default_backend()
+            )
+            key = kdf.derive(password_with_pepper.encode('utf-8'))
+            derived_hash = base64.b64encode(key).decode('utf-8')
+
+            return secrets.compare_digest(derived_hash, hashed_password)
+
+        except Exception:
+            return False
+
+    def set_password(self, password: str):
+        hashed_password, salt = User.hash_password(password)
+        self.password_hash = hashed_password
+        self.salt = salt
+
+    def check_password(self, password: str) -> bool:
+        return User.verify_password(password, self.password_hash, self.salt)
     
     def validate_phone(self):
         if self.phone:

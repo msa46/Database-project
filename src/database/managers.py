@@ -68,21 +68,29 @@ class PizzaManager(BaseManager):
 
 class UserManager(BaseManager):
     """Handles user creation."""
-    
+
     @staticmethod
-    def create(username: str, email: str, birthdate: Optional[date] = None, 
+    def create(username: str, email: str, password: str, birthdate: Optional[date] = None,
               address: Optional[str] = None, postalCode: Optional[str] = None,
               phone: Optional[str] = None, Gender: Optional[str] = None) -> User:
-        return BaseManager.create_entity(
-            User, 
-            username=username, 
-            email=email, 
-            birthdate=birthdate, 
-            address=address, 
+        # Create user without password first
+        user = BaseManager.create_entity(
+            User,
+            username=username,
+            email=email,
+            birthdate=birthdate,
+            address=address,
             postalCode=postalCode,
             phone=phone,
-            Gender=Gender
+            Gender=Gender,
+            password_hash="",  # Temporary value, will be set properly
+            salt=""  # Temporary value, will be set properly
         )
+
+        # Set the password using the secure hashing method
+        user.set_password(password)
+
+        return user
     
     @staticmethod
     def create_batch(users_data: List[Dict[str, Any]]) -> List[User]:
@@ -91,13 +99,14 @@ class UserManager(BaseManager):
 
 class CustomerManager(UserManager):
     """Handles customer creation."""
-    
+
     @staticmethod
-    def create(username: str, email: str, loyalty_points: int = 0, 
+    def create(username: str, email: str, password: str, loyalty_points: int = 0,
               birthday_order: bool = False, **kwargs) -> Customer:
         user_data = {
             'username': username,
             'email': email,
+            'password': password,
             **kwargs
         }
         customer_data = {
@@ -113,12 +122,13 @@ class CustomerManager(UserManager):
 
 class EmployeeManager(UserManager):
     """Handles employee creation."""
-    
+
     @staticmethod
-    def create(username: str, email: str, position: str, salary: float, **kwargs) -> Employee:
+    def create(username: str, email: str, password: str, position: str, salary: float, **kwargs) -> Employee:
         user_data = {
             'username': username,
             'email': email,
+            'password': password,
             **kwargs
         }
         employee_data = {
@@ -134,13 +144,14 @@ class EmployeeManager(UserManager):
 
 class DeliveryPersonManager(EmployeeManager):
     """Handles delivery person creation."""
-    
+
     @staticmethod
-    def create(username: str, email: str, position: str, salary: float, 
+    def create(username: str, email: str, password: str, position: str, salary: float,
               status: DeliveryStatus = DeliveryStatus.Available, **kwargs) -> DeliveryPerson:
         employee_data = {
             'username': username,
             'email': email,
+            'password': password,
             'position': position,
             'salary': salary,
             **kwargs
@@ -308,7 +319,8 @@ class DataManager:
             last_name = self.faker.last_name()
             username = f"{first_name.lower()}_{last_name.lower()}"
             email = f"{username}@{self.faker.free_email_domain()}"
-            
+            password = self.faker.password(length=12, special_chars=True, digits=True, upper_case=True, lower_case=True)
+
             birthdate = self.faker.date_of_birth(minimum_age=18, maximum_age=70)
             address = self.faker.street_address()
             postal_code = self.faker.postcode()
@@ -316,10 +328,11 @@ class DataManager:
             gender = random.choice(['Male', 'Female', 'Other'])
             loyalty_points = random.randint(0, 500)
             birthday_order = random.choice([True, False])
-            
+
             customer = self.customer.create(
                 username=username,
                 email=email,
+                password=password,
                 birthdate=birthdate,
                 address=address,
                 postalCode=postal_code,
@@ -329,30 +342,32 @@ class DataManager:
                 birthday_order=birthday_order
             )
             customers.append(customer)
-        
+
         return customers
     
     @db_session
     def create_fake_delivery_persons(self, count=1):
         positions = ['Delivery Driver', 'Senior Delivery Driver', 'Delivery Manager']
         statuses = list(DeliveryStatus)
-        
+
         delivery_persons = []
         for _ in range(count):
             first_name = self.faker.first_name()
             last_name = self.faker.last_name()
             username = f"delivery_{first_name.lower()}"
             email = f"{username}@{self.faker.free_email_domain()}"
-            
+            password = self.faker.password(length=12, special_chars=True, digits=True, upper_case=True, lower_case=True)
+
             position = random.choice(positions)
             salary = round(random.uniform(1800.0, 2500.0), 2)
             status = random.choice(statuses)
             phone = self.faker.phone_number()
             gender = random.choice(['Male', 'Female', 'Other'])
-            
+
             delivery_person = self.delivery_person.create(
                 username=username,
                 email=email,
+                password=password,
                 position=position,
                 salary=salary,
                 status=status,
@@ -360,7 +375,7 @@ class DataManager:
                 Gender=gender
             )
             delivery_persons.append(delivery_person)
-        
+
         return delivery_persons
     
     @db_session

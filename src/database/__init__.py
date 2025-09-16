@@ -1,13 +1,15 @@
 from .db import db, init_db
 from .models import *
 from .managers import DataManager
+from .queryManager import QueryManager
 
 __all__ = [
     'db',
     'init_db',
     'DataManager',
+    'QueryManager',
     'IngredientType',
-    'ExtraType', 
+    'ExtraType',
     'DeliveryStatus',
     'OrderStatus',
     'OrderPizzaRelation',

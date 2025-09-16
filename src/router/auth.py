@@ -1,0 +1,297 @@
+from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from pydantic import BaseModel, EmailStr, field_validator, ValidationInfo
+from typing import Optional
+from pony.orm import db_session, select
+from datetime import datetime, timedelta, timezone
+import jwt
+import os
+
+from ..database.models import User, Customer
+from ..database.managers import CustomerManager
+
+# Pydantic models for request/response
+class UserSignupRequest(BaseModel):
+    username: str
+    email: EmailStr
+    password: str
+    confirm_password: str
+    birthdate: Optional[datetime] = None
+    address: Optional[str] = None
+    postalCode: Optional[str] = None
+    phone: Optional[str] = None
+    gender: Optional[str] = None
+
+    @field_validator('confirm_password')
+    @classmethod
+    def passwords_match(cls, v: str, info: ValidationInfo) -> str:
+        password = info.data.get('password')
+        if password and v != password:
+            raise ValueError('Passwords do not match')
+        return v
+
+    @field_validator('username')
+    @classmethod
+    def username_length(cls, v: str) -> str:
+        if len(v) < 3:
+            raise ValueError('Username must be at least 3 characters long')
+        if len(v) > 50:
+            raise ValueError('Username must be less than 50 characters long')
+        return v
+
+class UserLoginRequest(BaseModel):
+    username_or_email: str
+    password: str
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+    user_id: int
+    username: str
+    email: str
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: str
+    birthdate: Optional[datetime] = None
+    address: Optional[str] = None
+    postalCode: Optional[str] = None
+    phone: Optional[str] = None
+    gender: Optional[str] = None
+
+# JWT configuration
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+# OAuth2 scheme for token authentication
+oauth2_scheme = OAuth2PasswordBearer(
+    tokenUrl="auth/login",
+    scheme_name="JWT",
+    auto_error=True,
+    description="JWT token for authentication"
+)
+
+# Router
+router = APIRouter(prefix="/auth", tags=["authentication"])
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    """Create JWT access token"""
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt, expire
+
+def verify_token(token: str):
+    """Verify JWT token"""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except jwt.InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+@router.post("/signup", response_model=UserResponse)
+@db_session
+def signup(user_data: UserSignupRequest):
+    """Register a new user account"""
+    try:
+        # Check if username already exists
+        existing_user = select(u for u in User if u.username == user_data.username).first()
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already registered"
+            )
+
+        # Check if email already exists
+        existing_email = select(u for u in User if u.email == user_data.email).first()
+        if existing_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+
+        # Create new customer account
+        customer = CustomerManager.create(
+            username=user_data.username,
+            email=user_data.email,
+            password=user_data.password,
+            birthdate=user_data.birthdate,
+            address=user_data.address,
+            postalCode=user_data.postalCode,
+            phone=user_data.phone,
+            Gender=user_data.gender
+        )
+
+        return UserResponse(
+            id=customer.id,
+            username=customer.username,
+            email=customer.email,
+            birthdate=customer.birthdate,
+            address=customer.address,
+            postalCode=customer.postalCode,
+            phone=customer.phone,
+            gender=customer.Gender
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Validation error: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Registration failed"
+        )
+
+@router.post("/login", response_model=TokenResponse)
+@db_session
+def login(credentials: UserLoginRequest):
+    """Authenticate user and return access token"""
+    try:
+        # Find user by username or email
+        user = select(u for u in User if u.username == credentials.username_or_email or u.email == credentials.username_or_email).first()
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username/email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Verify password
+        if not user.check_password(credentials.password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username/email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Create access token
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token, expire_time = create_access_token(
+            data={"sub": user.username, "user_id": user.id},
+            expires_delta=access_token_expires
+        )
+
+        return TokenResponse(
+            access_token=access_token,
+            token_type="bearer",
+            expires_in=int(access_token_expires.total_seconds()),
+            user_id=user.id,
+            username=user.username,
+            email=user.email
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Validation error: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Login failed"
+        )
+
+@router.get("/me", response_model=UserResponse)
+@db_session
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    """Get current authenticated user information"""
+    try:
+        payload = verify_token(token)
+        username: str = payload.get("sub")
+
+        user = select(u for u in User if u.username == username).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        return UserResponse(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            birthdate=user.birthdate,
+            address=user.address,
+            postalCode=user.postalCode,
+            phone=user.phone,
+            gender=user.Gender
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Validation error: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get user info"
+        )
+
+@router.post("/refresh", response_model=TokenResponse)
+@db_session
+def refresh_token(token: str = Depends(oauth2_scheme)):
+    """Refresh access token"""
+    try:
+        payload = verify_token(token)
+
+        # Create new access token
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        new_access_token, expire_time = create_access_token(
+            data={"sub": payload.get("sub"), "user_id": payload.get("user_id")},
+            expires_delta=access_token_expires
+        )
+
+        return TokenResponse(
+            access_token=new_access_token,
+            token_type="bearer",
+            expires_in=int(access_token_expires.total_seconds()),
+            user_id=payload.get("user_id"),
+            username=payload.get("sub"),
+            email=""  # Would need to fetch from DB if needed
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Validation error: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Token refresh failed"
+        )

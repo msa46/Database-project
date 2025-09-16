@@ -1,6 +1,6 @@
 from datetime import datetime, date, time
 from enum import Enum
-from pony.orm import Required, PrimaryKey, Optional, Set, db_session, Index
+from pony.orm import Required, PrimaryKey, Optional, Set, db_session
 from .db import db
 
 import re
@@ -92,7 +92,7 @@ class User(db.Entity):
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
-            iterations=1000
+            iterations=1000,
             backend=default_backend()
         )
         key = kdf.derive(password_with_pepper.encode('utf-8'))

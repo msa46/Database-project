@@ -42,6 +42,18 @@ class QueryManager:
         """Get all pizzas."""
         return Pizza.select()[:]
     
+    @staticmethod
+    @db_session
+    def get_vegan_pizzas() -> List[Pizza]:
+        """Get all pizzas that are vegan (all ingredients are vegan)."""
+        return Pizza.select(p for p in Pizza if all(i.type == IngredientType.Vegan for i in p.ingredients))[:]
+
+    @staticmethod
+    @db_session
+    def get_vegetarian_pizzas() -> List[Pizza]:
+        """Get all pizzas that are vegetarian (all ingredients are vegan or vegetarian)."""
+        return Pizza.select(p for p in Pizza if all(i.type in [IngredientType.Vegan, IngredientType.Vegetarian] for i in p.ingredients))[:]
+    
 # Calculates pizza price based on ingredient costs, margin and VAT
     @staticmethod
     @db_session

@@ -153,6 +153,18 @@ class QueryManager:
         if not pizza_quantities:
             raise ValueError("At least one pizza is required")
 
+        # Collect all pizza and extra IDs for batch fetching
+        pizza_ids = [item[0] for item in pizza_quantities]
+        extra_ids_set = set(extra_ids) if extra_ids else set()
+
+        # Fetch all pizzas and extras in single queries
+        pizzas = Pizza.select(p for p in Pizza if p.id in pizza_ids) if pizza_ids else []
+        extras = Extra.select(e for e in Extra if e.id in extra_ids_set) if extra_ids_set else []
+
+        # Create dictionaries for O(1) lookups
+        pizza_dict = {p.id: p for p in pizzas}
+        extra_dict = {e.id: e for e in extras}
+
         # Create the order
         order = Order(
             user=user,
@@ -163,18 +175,18 @@ class QueryManager:
             delivery_person=delivery_person
         )
 
-        # Add pizzas with quantities
+        # Add pizzas with quantities using dictionary lookup
         for item in pizza_quantities:
             pizza_id, quantity = item
-            pizza = Pizza.get(id=pizza_id)
+            pizza = pizza_dict.get(pizza_id)
             if not pizza:
                 raise ValueError(f"Pizza with id {pizza_id} not found")
             OrderPizzaRelation(order=order, pizza=pizza, quantity=quantity)
 
-        # Add extras if provided
+        # Add extras if provided using dictionary lookup
         if extra_ids:
             for extra_id in extra_ids:
-                extra = Extra.get(id=extra_id)
+                extra = extra_dict.get(extra_id)
                 if not extra:
                     raise ValueError(f"Extra with id {extra_id} not found")
                 order.extras.add(extra)

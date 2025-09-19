@@ -103,17 +103,27 @@ class CustomerManager(UserManager):
     @staticmethod
     def create(username: str, email: str, password: str, loyalty_points: int = 0,
               birthday_order: bool = False, **kwargs) -> Customer:
-        user_data = {
+        # Generate a temporary password hash and salt
+        temp_password = "temp_password_" + username
+        temp_hash, temp_salt = User.hash_password(temp_password)
+        
+        # Create customer with temporary password hash
+        customer_data = {
             'username': username,
             'email': email,
-            'password': password,
+            'password_hash': temp_hash,
+            'salt': temp_salt,
+            'loyalty_points': loyalty_points,
+            'birthday_order': birthday_order,
             **kwargs
         }
-        customer_data = {
-            'loyalty_points': loyalty_points,
-            'birthday_order': birthday_order
-        }
-        return BaseManager.create_entity(Customer, **user_data, **customer_data)
+        
+        customer = BaseManager.create_entity(Customer, **customer_data)
+
+        # Set the password using the secure hashing method
+        customer.set_password(password)
+
+        return customer
     
     @staticmethod
     def create_batch(customers_data: List[Dict[str, Any]]) -> List[Customer]:
@@ -125,17 +135,29 @@ class EmployeeManager(UserManager):
 
     @staticmethod
     def create(username: str, email: str, password: str, position: str, salary: float, **kwargs) -> Employee:
+        # Generate a temporary password hash and salt
+        temp_password = "temp_password_" + username
+        temp_hash, temp_salt = User.hash_password(temp_password)
+        
+        # Create employee with temporary password hash
         user_data = {
             'username': username,
             'email': email,
-            'password': password,
+            'password_hash': temp_hash,
+            'salt': temp_salt,
             **kwargs
         }
         employee_data = {
             'position': position,
             'salary': salary
         }
-        return BaseManager.create_entity(Employee, **user_data, **employee_data)
+        
+        employee = BaseManager.create_entity(Employee, **user_data, **employee_data)
+        
+        # Set the password using the secure hashing method
+        employee.set_password(password)
+        
+        return employee
     
     @staticmethod
     def create_batch(employees_data: List[Dict[str, Any]]) -> List[Employee]:
@@ -148,10 +170,16 @@ class DeliveryPersonManager(EmployeeManager):
     @staticmethod
     def create(username: str, email: str, password: str, position: str, salary: float,
               status: DeliveryStatus = DeliveryStatus.Available, **kwargs) -> DeliveryPerson:
+        # Generate a temporary password hash and salt
+        temp_password = "temp_password_" + username
+        temp_hash, temp_salt = User.hash_password(temp_password)
+        
+        # Create delivery person with temporary password hash
         employee_data = {
             'username': username,
             'email': email,
-            'password': password,
+            'password_hash': temp_hash,
+            'salt': temp_salt,
             'position': position,
             'salary': salary,
             **kwargs
@@ -159,7 +187,13 @@ class DeliveryPersonManager(EmployeeManager):
         delivery_person_data = {
             'status': status
         }
-        return BaseManager.create_entity(DeliveryPerson, **employee_data, **delivery_person_data)
+        
+        delivery_person = BaseManager.create_entity(DeliveryPerson, **employee_data, **delivery_person_data)
+        
+        # Set the password using the secure hashing method
+        delivery_person.set_password(password)
+        
+        return delivery_person
     
     @staticmethod
     def create_batch(delivery_persons_data: List[Dict[str, Any]]) -> List[DeliveryPerson]:
@@ -392,13 +426,16 @@ class DataManager:
         statuses = list(OrderStatus)
         orders = []
         
-        for _ in range(count):
+        for i in range(count):
             customer = random.choice(customers)
             status = random.choice(statuses)
             
+            # Create a unique combination of pizzas for this order
             order_pizzas = []
-            for _ in range(random.randint(1, min(3, len(pizzas)))):
-                pizza = random.choice(pizzas)
+            pizza_count = random.randint(1, min(3, len(pizzas)))
+            selected_pizzas = random.sample(pizzas, pizza_count)
+            
+            for pizza in selected_pizzas:
                 quantity = random.randint(1, 3)
                 order_pizzas.append({'pizza': pizza, 'quantity': quantity})
             

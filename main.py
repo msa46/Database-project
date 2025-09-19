@@ -1,6 +1,7 @@
 from typing import Union
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from src.database.db import init_db
 from src.router.auth import router as auth_router
 
@@ -8,6 +9,15 @@ app = FastAPI(
     title="Pizza Delivery API",
     description="Backend API for pizza delivery system with secure authentication",
     version="1.0.0"
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all methods
+    allow_headers=["*"],  # Allow all headers
 )
 
 # Initialize database

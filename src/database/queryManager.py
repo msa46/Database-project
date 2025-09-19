@@ -32,6 +32,31 @@ class QueryManager:
 
     @staticmethod
     @db_session
+    def get_all_ingredients() -> List[Ingredient]:
+        """Get all ingredients."""
+        return Ingredient.select()[:]
+
+    @staticmethod
+    @db_session
+    def get_all_pizzas() -> List[Pizza]:
+        """Get all pizzas."""
+        return Pizza.select()[:]
+    
+# Calculates pizza price based on ingredient costs, margin and VAT
+    @staticmethod
+    @db_session
+    def calculate_pizza_price(pizza_id: int) -> float:
+        """Calculate pizza price: ingredient cost + 40% margin + 9% VAT."""
+        pizza = Pizza.get(id=pizza_id)
+        if not pizza:
+            raise ValueError(f"Pizza with id {pizza_id} not found")
+        ingredient_cost = sum(ing.price for ing in pizza.ingredients)
+        with_margin = ingredient_cost * 1.40
+        with_vat = with_margin * 1.09
+        return round(with_vat, 2)
+
+    @staticmethod
+    @db_session
     def count_extras_by_type(extra_type: ExtraType) -> int:
         """Example: Count extras by type."""
         return Extra.select(e for e in Extra if e.type == extra_type).count()

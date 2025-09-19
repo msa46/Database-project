@@ -108,6 +108,196 @@ class QueryManager:
 
     @staticmethod
     @db_session
+    def get_orders_by_user(user_id: int) -> List[Order]:
+        """Get all orders for a specific user by user ID."""
+        user = User.get(id=user_id)
+        if not user:
+            return []
+        return list(user.orders)
+    
+    @staticmethod
+    @db_session
+    def create_order(
+                     user_id: int, 
+                     pizza_quantities: List[List[int]], 
+                     extra_ids: Optional[List[int]] = None, 
+                     discount_code: Optional[str] = None, 
+                     status: OrderStatus = OrderStatus.Pending, 
+                     created_at: Optional[datetime] = None, 
+                     delivered_at: Optional[datetime] = None, 
+                     delivery_person_id: Optional[int] = None, 
+                     postal_code: Optional[str] = None
+                     ) -> Order:
+        """Create a new order with at least one pizza and optional extras, by user ID, with optional discount code and additional order details.
+        pizza_quantities should be a list of [pizza_id, quantity] pairs.
+        """
+        user = User.get(id=user_id)
+        if not user:
+            raise ValueError(f"User with id {user_id} not found")
+
+        # Determine postal code
+        final_postal_code = postal_code or user.postalCode
+        if not final_postal_code:
+            raise ValueError("Postal code must be provided or set on the user")
+
+        # Determine created_at
+        final_created_at = created_at or datetime.now()
+
+        # Get delivery person if provided
+        delivery_person = None
+        if delivery_person_id:
+            delivery_person = DeliveryPerson.get(id=delivery_person_id)
+            if not delivery_person:
+                raise ValueError(f"Delivery person with id {delivery_person_id} not found")
+
+        if not pizza_quantities:
+            raise ValueError("At least one pizza is required")
+
+        # Create the order
+        order = Order(
+            user=user,
+            status=status,
+            postalCode=final_postal_code,
+            created_at=final_created_at,
+            delivered_at=delivered_at,
+            delivery_person=delivery_person
+        )
+
+        # Add pizzas with quantities
+        for item in pizza_quantities:
+            pizza_id, quantity = item
+            pizza = Pizza.get(id=pizza_id)
+            if not pizza:
+                raise ValueError(f"Pizza with id {pizza_id} not found")
+            OrderPizzaRelation(order=order, pizza=pizza, quantity=quantity)
+
+        # Add extras if provided
+        if extra_ids:
+            for extra_id in extra_ids:
+                extra = Extra.get(id=extra_id)
+                if not extra:
+                    raise ValueError(f"Extra with id {extra_id} not found")
+                order.extras.add(extra)
+
+        # Handle discount code if provided
+        if discount_code:
+            dc = DiscountCode.get(code=discount_code)
+            if not dc:
+                raise ValueError(f"Discount code '{discount_code}' not found")
+            now = datetime.now()
+            if dc.used:
+                raise ValueError("Discount code has already been used")
+            if dc.valid_from and now < dc.valid_from:
+                raise ValueError("Discount code is not yet valid")
+            if now > dc.valid_until:
+                raise ValueError("Discount code has expired")
+            dc.used = True
+            dc.used_by = user
+            # Optionally assign to user if not already set
+            if not user.discount_code:
+                user.discount_code = dc
+
+        return order
+
+    @staticmethod
+    @db_session
+    def update_order(order_id: int, 
+                     status: Optional[OrderStatus] = None, 
+                     delivered_at: Optional[datetime] = None, 
+                     delivery_person_id: Optional[int] = None, 
+                     postal_code: Optional[str] = None
+                     ) -> Order:
+        """Update an existing order's details such as status, delivery time, delivery person, or postal code."""
+        order = Order.get(id=order_id)
+        if not order:
+            raise ValueError(f"Order with id {order_id} not found")
+
+        if status is not None:
+            order.status = status
+            # Automatically set delivered_at if status is Delivered and not set
+            if status == OrderStatus.Delivered and order.delivered_at is None:
+                order.delivered_at = datetime.now()
+
+        if delivered_at is not None:
+            order.delivered_at = delivered_at
+
+        if delivery_person_id is not None:
+            delivery_person = DeliveryPerson.get(id=delivery_person_id)
+            if not delivery_person:
+                raise ValueError(f"Delivery person with id {delivery_person_id} not found")
+            order.delivery_person = delivery_person
+
+        if postal_code is not None:
+            order.postalCode = postal_code
+
+        return order
+    
+    @staticmethod
+    @db_session
+    def delete_order(order_id: int) -> bool:
+        """Delete an order from the database by order ID."""
+        order = Order.get(id=order_id)
+        if not order:
+            return False
+        order.delete()
+        return True
+    
+    @staticmethod
+    @db_session
+    def get_order_confirmation(order_id: int) -> Optional[Dict[str, Any]]:
+        """Get order confirmation details including total price and itemized list with prices."""
+        order = Order.get(id=order_id)
+        if not order:
+            return None
+
+        items = []
+        total = 0.0
+
+        # Calculate pizza costs
+        for opr in order.Pizzas:
+            unit_price = QueryManager.calculate_pizza_price(opr.pizza.id)
+            subtotal = unit_price * opr.quantity
+            total += subtotal
+            items.append({
+                'type': 'pizza',
+                'name': opr.pizza.name,
+                'quantity': opr.quantity,
+                'unit_price': round(unit_price, 2),
+                'subtotal': round(subtotal, 2)
+            })
+
+        # Calculate extra costs
+        for extra in order.extras:
+            total += extra.price
+            items.append({
+                'type': 'extra',
+                'name': extra.name,
+                'quantity': 1,
+                'unit_price': round(extra.price, 2),
+                'subtotal': round(extra.price, 2)
+            })
+
+        # Apply discount if applicable
+        discount_info = None
+        if order.user.discount_code:
+            dc = order.user.discount_code
+            discount_amount = total * (dc.percentage / 100)
+            total -= discount_amount
+            discount_info = {
+                'code': dc.code,
+                'percentage': dc.percentage,
+                'amount': round(discount_amount, 2)
+            }
+
+        return {
+            'total_price': round(total, 2),
+            'items': items,
+            'discount': discount_info
+        }
+
+
+    @staticmethod
+    @db_session
     def count_extras_by_type(extra_type: ExtraType) -> int:
         """Example: Count extras by type."""
         return Extra.select(e for e in Extra if e.type == extra_type).count()

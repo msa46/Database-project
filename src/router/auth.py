@@ -6,9 +6,15 @@ from pony.orm import db_session, select
 from datetime import datetime, timedelta, timezone
 import jwt
 import os
+import logging
+import traceback
 
 from ..database.models import User, Customer
 from ..database.managers import CustomerManager
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 # Pydantic models for request/response
 class UserSignupRequest(BaseModel):
@@ -17,10 +23,10 @@ class UserSignupRequest(BaseModel):
     password: str
     confirm_password: str
     birthdate: Optional[datetime] = None
-    address: Optional[str] = None
-    postalCode: Optional[str] = None
-    phone: Optional[str] = None
-    gender: Optional[str] = None
+    address: str
+    postalCode: str
+    phone: str
+    gender: str
 
     @field_validator('confirm_password')
     @classmethod
@@ -120,23 +126,30 @@ def verify_token(token: str):
 def signup(user_data: UserSignupRequest):
     """Register a new user account"""
     try:
+        logger.debug(f"Signup attempt for username: {user_data.username}, email: {user_data.email}")
+        
         # Check if username already exists
-        existing_user = select(u for u in User if u.username == user_data.username).first()
+        logger.debug("Checking if username already exists")
+        existing_user = User.select(lambda u: u.username == user_data.username).first()
         if existing_user:
+            logger.warning(f"Username already registered: {user_data.username}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Username already registered"
             )
 
         # Check if email already exists
-        existing_email = select(u for u in User if u.email == user_data.email).first()
+        logger.debug("Checking if email already exists")
+        existing_email = User.select(lambda u: u.email == user_data.email).first()
         if existing_email:
+            logger.warning(f"Email already registered: {user_data.email}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already registered"
             )
 
         # Create new customer account
+        logger.debug("Creating new customer account")
         customer = CustomerManager.create(
             username=user_data.username,
             email=user_data.email,
@@ -147,6 +160,7 @@ def signup(user_data: UserSignupRequest):
             phone=user_data.phone,
             Gender=user_data.gender
         )
+        logger.debug(f"Customer created successfully with ID: {customer.id}")
 
         return UserResponse(
             id=customer.id,
@@ -160,14 +174,20 @@ def signup(user_data: UserSignupRequest):
         )
 
     except ValueError as e:
+        logger.error(f"Validation error during signup: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Validation error: {str(e)}"
         )
+    except HTTPException:
+        # Re-raise HTTP exceptions without modification
+        raise
     except Exception as e:
+        logger.error(f"Unexpected error during signup: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Registration failed"
+            detail=f"Registration failed: {str(e)}"
         )
 
 @router.post("/login", response_model=TokenResponse)

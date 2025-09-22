@@ -3,6 +3,8 @@ from typing import List, Dict, Any, Optional, Union
 from pony.orm import db_session, commit
 import random
 from faker import Faker
+import logging
+import traceback
 
 from .models import (
     IngredientType, ExtraType, DeliveryStatus, OrderStatus,
@@ -10,6 +12,9 @@ from .models import (
     Customer, Employee, DeliveryPerson, Order, DiscountCode
 )
 from .db import db
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class BaseManager:
@@ -101,29 +106,47 @@ class CustomerManager(UserManager):
     """Handles customer creation."""
 
     @staticmethod
+    @db_session
     def create(username: str, email: str, password: str, loyalty_points: int = 0,
               birthday_order: bool = False, **kwargs) -> Customer:
-        # Generate a temporary password hash and salt
-        temp_password = "temp_password_" + username
-        temp_hash, temp_salt = User.hash_password(temp_password)
-        
-        # Create customer with temporary password hash
-        customer_data = {
-            'username': username,
-            'email': email,
-            'password_hash': temp_hash,
-            'salt': temp_salt,
-            'loyalty_points': loyalty_points,
-            'birthday_order': birthday_order,
-            **kwargs
-        }
-        
-        customer = BaseManager.create_entity(Customer, **customer_data)
+        try:
+            logger.debug(f"Creating customer with username: {username}, email: {email}")
+            
+            # Generate a temporary password hash and salt
+            logger.debug("Generating temporary password hash and salt")
+            temp_password = "temp_password_" + username
+            temp_hash, temp_salt = User.hash_password(temp_password)
+            
+            # Create customer with temporary password hash
+            logger.debug("Creating customer entity with temporary password hash")
+            customer_data = {
+                'username': username,
+                'email': email,
+                'password_hash': temp_hash,
+                'salt': temp_salt,
+                'loyalty_points': loyalty_points,
+                'birthday_order': birthday_order,
+                **kwargs
+            }
+            
+            logger.debug(f"Customer data: {customer_data}")
+            customer = Customer(**customer_data)
+            logger.debug(f"Customer entity created with ID: {customer.id}")
 
-        # Set the password using the secure hashing method
-        customer.set_password(password)
+            # Set the password using the secure hashing method
+            logger.debug("Setting secure password for customer")
+            customer.set_password(password)
+            logger.debug("Password set successfully")
+            
+            # Commit the transaction to ensure the customer is saved to the database
+            commit()
+            logger.debug(f"Customer committed to database with ID: {customer.id}")
 
-        return customer
+            return customer
+        except Exception as e:
+            logger.error(f"Error creating customer: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
     
     @staticmethod
     def create_batch(customers_data: List[Dict[str, Any]]) -> List[Customer]:

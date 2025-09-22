@@ -67,12 +67,12 @@ class User(db.Entity):
     username = Required(str, unique=True)
     email = Required(str, unique=True)
     birthdate = Optional(date)
-    address = Optional(str)
-    postalCode = Optional(str)
-    phone = Optional(str)
+    address = Required(str)
+    postalCode = Required(str)
+    phone = Required(str)
     orders = Set("Order")
     discount_code = Optional("DiscountCode")
-    Gender = Optional(str)
+    Gender = Required(str)
     password_hash = Required(str)
     salt = Required(str)  # Store the unique salt for each user
 
@@ -146,7 +146,7 @@ class User(db.Entity):
 
 class Customer(User):
     loyalty_points = Required(int, default=0)
-    birthday_order = Required(bool)
+    birthday_order = Required(bool, default=False)
 class Employee(User):
     position = Required(str)  
     salary = Required(float)

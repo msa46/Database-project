@@ -307,9 +307,30 @@ class QueryManager:
             'discount': discount_info
         }
 
-
     @staticmethod
     @db_session
     def count_extras_by_type(extra_type: ExtraType) -> int:
         """Example: Count extras by type."""
         return Extra.select(e for e in Extra if e.type == extra_type).count()
+
+# Create loyalty queries
+    # Count pizzas bought for eligibility
+    # Apply DiscountCode
+    # Birthday benefit
+
+# Delivery queries
+    # Assign delivery person to order/postal code
+    # Update delivery status
+    # Optional: List undelivered or delayed orders
+
+# Staff queries
+    # Add/remove staff order (if they are able to order pizza)
+    # Create earnings report, filtered by:
+        # Gender
+        # Age group
+        # Postal code
+        # (optional: Driver workload, ingredients usage and costing)
+
+# Report queries
+    # Undelivered orders (customer / staff)
+    # Create report of top 3 pizza's sold in the past month

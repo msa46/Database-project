@@ -12,6 +12,7 @@ from .models import (
 class QueryManager:
     """Query manager with examples for ExtraType."""
 
+# -=-=-=-=-=- BASIC MENU QUERIES -=-=-=-=-=- #
     @staticmethod
     @db_session
     def get_extras_by_type(extra_type: ExtraType) -> List[Extra]:
@@ -54,6 +55,19 @@ class QueryManager:
         """Get all pizzas that are vegetarian (all ingredients are vegan or vegetarian)."""
         return Pizza.select(p for p in Pizza if all(i.type in [IngredientType.Vegan, IngredientType.Vegetarian] for i in p.ingredients))[:]
 
+    @staticmethod
+    @db_session
+    def calculate_pizza_price(pizza_id: int) -> float:
+        """Calculate pizza price: ingredient cost + 40% margin + 9% VAT."""
+        pizza = Pizza.get(id=pizza_id)
+        if not pizza:
+            raise ValueError(f"Pizza with id {pizza_id} not found")
+        ingredient_cost = sum(ing.price for ing in pizza.ingredients)
+        with_margin = ingredient_cost * 1.40
+        with_vat = with_margin * 1.09
+        return round(with_vat, 2)
+
+# -=-=-=-=-=- USER QUERIES -=-=-=-=-=- #
     #TODO: Check if this has all the options needed, since there are many optional fields
     @staticmethod
     @db_session
@@ -93,19 +107,7 @@ class QueryManager:
             return True
         return False
 
-    # Calculates pizza price based on ingredient costs, margin and VAT
-    @staticmethod
-    @db_session
-    def calculate_pizza_price(pizza_id: int) -> float:
-        """Calculate pizza price: ingredient cost + 40% margin + 9% VAT."""
-        pizza = Pizza.get(id=pizza_id)
-        if not pizza:
-            raise ValueError(f"Pizza with id {pizza_id} not found")
-        ingredient_cost = sum(ing.price for ing in pizza.ingredients)
-        with_margin = ingredient_cost * 1.40
-        with_vat = with_margin * 1.09
-        return round(with_vat, 2)
-
+# -=-=-=-=-=- ORDER QUERIES -=-=-=-=-=- #
     @staticmethod
     @db_session
     def get_orders_by_user(user_id: int) -> List[Order]:
@@ -313,17 +315,57 @@ class QueryManager:
         """Example: Count extras by type."""
         return Extra.select(e for e in Extra if e.type == extra_type).count()
 
-# Create loyalty queries
+# -=-=-=-=-=- LOYALTY QUERIES -=-=-=-=-=- #
     # Count pizzas bought for eligibility
     # Apply DiscountCode
     # Birthday benefit
 
-# Delivery queries
-    # Assign delivery person to order/postal code
-    # Update delivery status
-    # Optional: List undelivered or delayed orders
+# -=-=-=-=-=- DELIVERY QUERIES -=-=-=-=-=- #
 
-# Staff queries
+    @staticmethod
+    @db_session
+    def get_available_delivery_persons() -> List[DeliveryPerson]:
+        """Get all delivery persons who are currently available for assignments."""
+        return DeliveryPerson.select(dp for dp in DeliveryPerson if dp.status == DeliveryStatus.Available)[:]
+        
+    @staticmethod
+    @db_session
+    def update_delivery_person_status(delivery_person_id: int, new_status: DeliveryStatus) -> DeliveryPerson:
+        """Update the status of a delivery person."""
+        dp = DeliveryPerson.get(id=delivery_person_id)
+        if not dp:
+            raise ValueError(f"Delivery person with id {delivery_person_id} not found")
+        dp.status = new_status
+        return dp
+    
+    @staticmethod
+    @db_session
+    def assign_delivery_person_to_order(order_id: int) -> Optional[Dict[str, Any]]:
+        """Assign an available delivery person to an order.
+        Returns a dict with order_id and delivery_person_id if assignment was successful,
+        None if no suitable delivery person found."""
+        order = Order.get(id=order_id)
+        if not order:
+            raise ValueError(f"Order with id {order_id} not found")
+        if order.delivery_person:
+            raise ValueError("Order already has a delivery person assigned")
+        if order.status != OrderStatus.In_Progress:
+            raise ValueError("Order must be in progress to assign delivery person")
+
+        # Find available delivery persons using the dedicated query
+        available_dps = QueryManager.get_available_delivery_persons()
+        if not available_dps:
+            return None  # No available delivery person
+
+        # Assign the first available delivery person
+        dp = available_dps[0]
+        order.delivery_person = dp
+        dp.status = DeliveryStatus.On_Delivery
+        return {'order_id': order_id, 'delivery_person_id': dp.id}
+    
+    # Optional: List undelivered or delayed orders
+ 
+# -=-=-=-=-=- STAFF QUERIES -=-=-=-=-=- #
     # Add/remove staff order (if they are able to order pizza)
     # Create earnings report, filtered by:
         # Gender
@@ -331,6 +373,6 @@ class QueryManager:
         # Postal code
         # (optional: Driver workload, ingredients usage and costing)
 
-# Report queries
+# -=-=-=-=-=- REPORT QUERIES -=-=-=-=-=- #
     # Undelivered orders (customer / staff)
     # Create report of top 3 pizza's sold in the past month

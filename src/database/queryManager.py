@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional
 from pony.orm import db_session, select, desc, count
 
@@ -432,5 +432,29 @@ class QueryManager:
 
 
 # -=-=-=-=-=- REPORT QUERIES -=-=-=-=-=- #
-    # Undelivered orders (customer / staff)
-    # Create report of top 3 pizza's sold in the past month
+
+    @staticmethod
+    @db_session
+    def get_undelivered_customer_orders() -> List[Order]:
+        """Get all undelivered orders placed by customers."""
+        return Order.select(o for o in Order
+                            if isinstance(o.user, Customer)
+                            and o.status in [OrderStatus.Pending, OrderStatus.In_Progress])[:]
+
+    @staticmethod
+    @db_session
+    def get_undelivered_staff_orders() -> List[Order]:
+        """Get all undelivered orders placed by staff (employees)."""
+        return Order.select(o for o in Order
+                            if isinstance(o.user, Employee)
+                            and o.status in [OrderStatus.Pending, OrderStatus.In_Progress])[:]
+    
+    @staticmethod
+    @db_session
+    def get_top_3_pizzas_past_month() -> List[Dict[str, Any]]:
+        """Get the top 3 pizzas sold in the past month by quantity."""
+        past_month = datetime.now() - timedelta(days=30)
+        top_pizzas = select((p, sum(opr.quantity)) for p in Pizza for opr in p.order
+                            if opr.order.created_at >= past_month) \
+                            .order_by(-2)[:3]
+        return [{'pizza': p, 'total_quantity': qty} for p, qty in top_pizzas]

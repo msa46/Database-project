@@ -67,11 +67,22 @@ class QueryManager:
         with_vat = with_margin * 1.09
         return round(with_vat, 2)
 
-# -=-=-=-=-=- USER QUERIES -=-=-=-=-=- #
+# -=-=-=-=-=- CUSTOMER QUERIES -=-=-=-=-=- #
+#TODO: THIS IS FOR CUSTOMERS ONLY, EMPLOYEES ARE NOT HANDLED HERE. MAYBE THEY SHOULD BE?
+
     #TODO: Check if this has all the options needed, since there are many optional fields
     @staticmethod
     @db_session
-    def add_customer(username: str, email: str, password: str, birthday_order: bool, loyalty_points: int = 0, phone: Optional[str] = None, address: Optional[str] = None, postal_code: Optional[str] = None, birthdate: Optional[date] = None, gender: Optional[str] = None) -> Customer:
+    def add_customer(username: str, 
+                     email: str, 
+                     password: str, 
+                     birthday_order: bool, 
+                     loyalty_points: int = 0, 
+                     phone: Optional[str] = None, 
+                     address: Optional[str] = None, 
+                     postal_code: Optional[str] = None, 
+                     birthdate: Optional[date] = None, 
+                     gender: Optional[str] = None) -> Customer:
         """Add a new customer to the database with all available options."""
         customer_data = {
             'username': username,
@@ -106,6 +117,35 @@ class QueryManager:
             customer.delete()
             return True
         return False
+
+    #TODO: Check if this has all the options needed, since there are many optional fields
+    @staticmethod
+    @db_session
+    def update_customer(username: str, 
+                        email: Optional[str] = None, 
+                        phone: Optional[str] = None, 
+                        address: Optional[str] = None, 
+                        postal_code: Optional[str] = None, 
+                        birthdate: Optional[date] = None
+                    ) -> bool:
+        """Update a customer's information."""
+        customer = Customer.get(username=username)
+        if not customer:
+            return False
+
+        # Update fields if provided
+        if email is not None:
+            customer.email = email
+        if phone is not None:
+            customer.phone = phone
+        if address is not None:
+            customer.address = address
+        if postal_code is not None:
+            customer.postalCode = postal_code
+        if birthdate is not None:
+            customer.birthdate = birthdate
+
+        return True
 
 # -=-=-=-=-=- ORDER QUERIES -=-=-=-=-=- #
     @staticmethod
@@ -367,11 +407,29 @@ class QueryManager:
  
 # -=-=-=-=-=- STAFF QUERIES -=-=-=-=-=- #
     # Add/remove staff order (if they are able to order pizza)
-    # Create earnings report, filtered by:
-        # Gender
-        # Age group
-        # Postal code
-        # (optional: Driver workload, ingredients usage and costing)
+    # (OPTIONAL: Create earnings report, filtered by Driver workload, ingredients usage and costing)
+    
+    @staticmethod
+    @db_session
+    def get_earnings_by_gender(gender: str) -> float:
+        """Get total earnings (salaries) for employees filtered by gender."""
+        return sum(e.salary for e in Employee if e.Gender == gender)
+
+    @staticmethod
+    @db_session
+    def get_earnings_by_age_group(min_age: int, max_age: int) -> float:
+        """Get total earnings (salaries) for employees filtered by age group."""
+        today = date.today()
+        return sum(e.salary for e in Employee
+                   if e.birthdate and (today.year - e.birthdate.year) >= min_age
+                   and (today.year - e.birthdate.year) <= max_age)
+
+    @staticmethod
+    @db_session
+    def get_earnings_by_postal_code(postal_code: str) -> float:
+        """Get total earnings (salaries) for employees filtered by postal code."""
+        return sum(e.salary for e in Employee if e.postalCode == postal_code)
+
 
 # -=-=-=-=-=- REPORT QUERIES -=-=-=-=-=- #
     # Undelivered orders (customer / staff)

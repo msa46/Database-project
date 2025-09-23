@@ -356,6 +356,7 @@ class QueryManager:
         return Extra.select(e for e in Extra if e.type == extra_type).count()
 
 # -=-=-=-=-=- LOYALTY QUERIES -=-=-=-=-=- #
+#TODO: Implement loyalty points system
     # Count pizzas bought for eligibility
     # Apply DiscountCode
     # Birthday benefit
@@ -449,6 +450,7 @@ class QueryManager:
                             if isinstance(o.user, Employee)
                             and o.status in [OrderStatus.Pending, OrderStatus.In_Progress])[:]
     
+    #TODO: Check if this works as intended
     @staticmethod
     @db_session
     def get_top_3_pizzas_past_month() -> List[Dict[str, Any]]:

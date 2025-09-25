@@ -1,6 +1,7 @@
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional
-from pony.orm import db_session, select, desc, count
+from pony.orm import db_session, select, desc, count, avg
+import re
 
 from .models import (
     IngredientType, ExtraType, DeliveryStatus, OrderStatus,
@@ -12,6 +13,7 @@ from .models import (
 class QueryManager:
     """Query manager with examples for ExtraType."""
 
+# -=-=-=-=-=- BASIC MENU QUERIES -=-=-=-=-=- #
     @staticmethod
     @db_session
     def get_extras_by_type(extra_type: ExtraType) -> List[Extra]:
@@ -54,46 +56,6 @@ class QueryManager:
         """Get all pizzas that are vegetarian (all ingredients are vegan or vegetarian)."""
         return Pizza.select(p for p in Pizza if all(i.type in [IngredientType.Vegan, IngredientType.Vegetarian] for i in p.ingredients))[:]
 
-    #TODO: Check if this has all the options needed, since there are many optional fields
-    @staticmethod
-    @db_session
-    def add_customer(username: str, email: str, password: str, birthday_order: bool, loyalty_points: int = 0, phone: Optional[str] = None, address: Optional[str] = None, postal_code: Optional[str] = None, birthdate: Optional[date] = None, gender: Optional[str] = None) -> Customer:
-        """Add a new customer to the database with all available options."""
-        customer_data = {
-            'username': username,
-            'email': email,
-            'birthday_order': birthday_order,
-            'loyalty_points': loyalty_points
-        }
-
-        # Add optional fields only if they are provided
-        if phone is not None:
-            customer_data['phone'] = phone
-        if address is not None:
-            customer_data['address'] = address
-        if postal_code is not None:
-            customer_data['postalCode'] = postal_code
-        if birthdate is not None:
-            customer_data['birthdate'] = birthdate
-        if gender is not None:
-            customer_data['Gender'] = gender
-
-        customer = Customer(**customer_data)
-        customer.set_password(password)
-        return customer
-
-    #TODO: Check if everything gets removed properly (orders, discount codes, etc.)
-    @staticmethod
-    @db_session
-    def remove_customer(username: str) -> bool:
-        """Remove a customer from the database by username."""
-        customer = Customer.get(username=username)
-        if customer:
-            customer.delete()
-            return True
-        return False
-
-    # Calculates pizza price based on ingredient costs, margin and VAT
     @staticmethod
     @db_session
     def calculate_pizza_price(pizza_id: int) -> float:
@@ -106,6 +68,174 @@ class QueryManager:
         with_vat = with_margin * 1.09
         return round(with_vat, 2)
 
+# -=-=-=-=-=- USER QUERIES -=-=-=-=-=- #
+
+    @staticmethod
+    @db_session
+    def add_user(username: str,
+                 email: str,
+                 password: str,
+                 phone: Optional[str] = None,
+                 address: Optional[str] = None,
+                 postal_code: Optional[str] = None,
+                 birthdate: Optional[date] = None,
+                 gender: Optional[str] = None,
+                 # Customer specific
+                 birthday_order: Optional[bool] = None,
+                 loyalty_points: Optional[int] = None,
+                 # Employee specific
+                 position: Optional[str] = None,
+                 salary: Optional[float] = None,
+                 # DeliveryPerson specific
+                 status: Optional[DeliveryStatus] = None) -> User:
+        """Add a new user to the database. The type of user (Customer, Employee, DeliveryPerson, or base User)
+        is determined by the parameters provided. Always creates a base User first, then 'updates' to the specific type."""
+
+        # Base user data
+        user_data = {
+            'username': username,
+            'email': email
+        }
+
+        # Add optional base fields
+        if phone is not None:
+            user_data['phone'] = phone
+        if address is not None:
+            user_data['address'] = address
+        if postal_code is not None:
+            user_data['postalCode'] = postal_code
+        if birthdate is not None:
+            user_data['birthdate'] = birthdate
+        if gender is not None:
+            user_data['Gender'] = gender
+
+        # Determine user type based on provided parameters
+        if status is not None:
+            # DeliveryPerson
+            user_data['position'] = position or ''
+            user_data['salary'] = salary or 0.0
+            user_data['status'] = status
+            user = DeliveryPerson(**user_data)
+        elif position is not None or salary is not None:
+            # Employee
+            user_data['position'] = position or ''
+            user_data['salary'] = salary or 0.0
+            user = Employee(**user_data)
+        elif birthday_order is not None or loyalty_points is not None:
+            # Customer
+            user_data['birthday_order'] = birthday_order if birthday_order is not None else False
+            user_data['loyalty_points'] = loyalty_points if loyalty_points is not None else 0
+            user = Customer(**user_data)
+        else:
+            # Base User
+            user = User(**user_data)
+
+        user.set_password(password)
+        return user
+
+    @staticmethod
+    @db_session
+    def remove_user(username: str) -> bool:
+        """Remove a user from the database by username. Works for any user type (Customer, Employee, DeliveryPerson, or base User)."""
+        user = User.get(username=username)
+        if user:
+            user.delete()
+            return True
+        return False
+
+    @staticmethod
+    @db_session
+    def update_user(username: str,
+                    email: Optional[str] = None,
+                    phone: Optional[str] = None,
+                    address: Optional[str] = None,
+                    postal_code: Optional[str] = None,
+                    birthdate: Optional[date] = None,
+                    gender: Optional[str] = None,
+                    # Customer specific
+                    birthday_order: Optional[bool] = None,
+                    loyalty_points: Optional[int] = None,
+                    # Employee specific
+                    position: Optional[str] = None,
+                    salary: Optional[float] = None,
+                    # DeliveryPerson specific
+                    status: Optional[DeliveryStatus] = None) -> bool:
+        """Update a user's information. Works for any user type and updates fields that exist on the user."""
+        user = User.get(username=username)
+        if not user:
+            return False
+    
+        # Validate and update base fields if provided
+        if email is not None:
+            # Validate email format
+            if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+                raise ValueError("Invalid email format")
+            # Check uniqueness
+            existing = User.get(email=email)
+            if existing and existing != user:
+                raise ValueError("Email already in use")
+            user.email = email
+    
+        if phone is not None:
+            # Validate phone format
+            clean = re.sub(r'[^\d+]', '', phone)
+            if clean.startswith('+'):
+                if not re.match(r'^\+[1-9][0-9]{6,14}$', clean):
+                    raise ValueError("Invalid international phone format")
+            else:
+                if not re.match(r'^[0-9]{10}$', clean):
+                    raise ValueError("Domestic phone must be exactly 10 digits")
+            user.phone = phone
+    
+        if address is not None:
+            if not address.strip():
+                raise ValueError("Address cannot be empty")
+            user.address = address
+    
+        if postal_code is not None:
+            if not postal_code.strip():
+                raise ValueError("Postal code cannot be empty")
+            user.postalCode = postal_code
+    
+        if birthdate is not None:
+            if not isinstance(birthdate, date):
+                raise ValueError("Birthdate must be a date object")
+            if birthdate > date.today():
+                raise ValueError("Birthdate cannot be in the future")
+            user.birthdate = birthdate
+    
+        if gender is not None:
+            if not gender.strip():
+                raise ValueError("Gender cannot be empty")
+            user.Gender = gender
+    
+        # Validate and update type-specific fields if they exist on the user and are provided
+        if hasattr(user, 'birthday_order') and birthday_order is not None:
+            if not isinstance(birthday_order, bool):
+                raise ValueError("Birthday order must be a boolean")
+            user.birthday_order = birthday_order
+    
+        if hasattr(user, 'loyalty_points') and loyalty_points is not None:
+            if not isinstance(loyalty_points, int) or loyalty_points < 0:
+                raise ValueError("Loyalty points must be a non-negative integer")
+            user.loyalty_points = loyalty_points
+    
+        if hasattr(user, 'position') and position is not None:
+            if not position.strip():
+                raise ValueError("Position cannot be empty")
+            user.position = position
+    
+        if hasattr(user, 'salary') and salary is not None:
+            if not isinstance(salary, (int, float)) or salary <= 0:
+                raise ValueError("Salary must be a positive number")
+            user.salary = salary
+    
+        if hasattr(user, 'status') and status is not None:
+            user.status = status
+    
+        return True
+
+# -=-=-=-=-=- ORDER QUERIES -=-=-=-=-=- #
     @staticmethod
     @db_session
     def get_orders_by_user(user_id: int) -> List[Order]:
@@ -307,9 +437,140 @@ class QueryManager:
             'discount': discount_info
         }
 
-
     @staticmethod
     @db_session
     def count_extras_by_type(extra_type: ExtraType) -> int:
         """Example: Count extras by type."""
         return Extra.select(e for e in Extra if e.type == extra_type).count()
+
+# -=-=-=-=-=- LOYALTY QUERIES -=-=-=-=-=- #
+#TODO: Implement loyalty points system
+    # Count pizzas bought for eligibility
+    # Apply DiscountCode
+    # Birthday benefit
+
+# -=-=-=-=-=- DELIVERY QUERIES -=-=-=-=-=- #
+
+    @staticmethod
+    @db_session
+    def get_available_delivery_persons() -> List[DeliveryPerson]:
+        """Get all delivery persons who are currently available for assignments."""
+        return DeliveryPerson.select(dp for dp in DeliveryPerson if dp.status == DeliveryStatus.Available)[:]
+        
+    @staticmethod
+    @db_session
+    def update_delivery_person_status(delivery_person_id: int, new_status: DeliveryStatus) -> DeliveryPerson:
+        """Update the status of a delivery person."""
+        dp = DeliveryPerson.get(id=delivery_person_id)
+        if not dp:
+            raise ValueError(f"Delivery person with id {delivery_person_id} not found")
+        dp.status = new_status
+        return dp
+    
+    @staticmethod
+    @db_session
+    def assign_delivery_person_to_order(order_id: int) -> Optional[Dict[str, Any]]:
+        """Assign an available delivery person to an order.
+        Returns a dict with order_id and delivery_person_id if assignment was successful,
+        None if no suitable delivery person found."""
+        order = Order.get(id=order_id)
+        if not order:
+            raise ValueError(f"Order with id {order_id} not found")
+        if order.delivery_person:
+            raise ValueError("Order already has a delivery person assigned")
+        if order.status != OrderStatus.In_Progress:
+            raise ValueError("Order must be in progress to assign delivery person")
+
+        # Find available delivery persons using the dedicated query
+        available_dps = QueryManager.get_available_delivery_persons()
+        if not available_dps:
+            return None  # No available delivery person
+
+        # Assign the first available delivery person
+        dp = available_dps[0]
+        order.delivery_person = dp
+        dp.status = DeliveryStatus.On_Delivery
+        return {'order_id': order_id, 'delivery_person_id': dp.id}
+    
+    # Optional: List undelivered or delayed orders
+ 
+# -=-=-=-=-=- STAFF QUERIES -=-=-=-=-=- #
+    # Add/remove staff order (if they are able to order pizza)
+    # (OPTIONAL: Create earnings report, filtered by Driver workload, ingredients usage and costing)
+    
+# Sum of earnings:
+    @staticmethod
+    @db_session
+    def get_earnings_by_gender(gender: str) -> float:
+        """Get total earnings (salaries) for employees filtered by gender."""
+        return sum(e.salary for e in Employee if e.Gender == gender)
+
+    @staticmethod
+    @db_session
+    def get_earnings_by_age_group(min_age: int, max_age: int) -> float:
+        """Get total earnings (salaries) for employees filtered by age group."""
+        today = date.today()
+        return sum(e.salary for e in Employee
+                   if e.birthdate and (today.year - e.birthdate.year) >= min_age
+                   and (today.year - e.birthdate.year) <= max_age)
+
+    @staticmethod
+    @db_session
+    def get_earnings_by_postal_code(postal_code: str) -> float:
+        """Get total earnings (salaries) for employees filtered by postal code."""
+        return sum(e.salary for e in Employee if e.postalCode == postal_code)
+
+# Average of earnings:
+    @staticmethod
+    @db_session
+    def get_average_salary_by_gender(gender: str) -> float:
+        """Get average salary for employees filtered by gender."""
+        result = select(avg(e.salary) for e in Employee if e.Gender == gender).first()
+        return result or 0.0
+
+    @staticmethod
+    @db_session
+    def get_average_salary_by_age_group(min_age: int, max_age: int) -> float:
+        """Get average salary for employees filtered by age group."""
+        today = date.today()
+        result = select(avg(e.salary) for e in Employee
+                        if e.birthdate and (today.year - e.birthdate.year) >= min_age
+                        and (today.year - e.birthdate.year) <= max_age).first()
+        return result or 0.0
+
+    @staticmethod
+    @db_session
+    def get_average_salary_by_postal_code(postal_code: str) -> float:
+        """Get average salary for employees filtered by postal code."""
+        result = select(avg(e.salary) for e in Employee if e.postalCode == postal_code).first()
+        return result or 0.0
+
+
+# -=-=-=-=-=- REPORT QUERIES -=-=-=-=-=- #
+
+    @staticmethod
+    @db_session
+    def get_undelivered_customer_orders() -> List[Order]:
+        """Get all undelivered orders placed by customers."""
+        return Order.select(o for o in Order
+                            if isinstance(o.user, Customer)
+                            and o.status in [OrderStatus.Pending, OrderStatus.In_Progress])[:]
+
+    @staticmethod
+    @db_session
+    def get_undelivered_staff_orders() -> List[Order]:
+        """Get all undelivered orders placed by staff (employees)."""
+        return Order.select(o for o in Order
+                            if isinstance(o.user, Employee)
+                            and o.status in [OrderStatus.Pending, OrderStatus.In_Progress])[:]
+    
+    #TODO: Check if this works as intended
+    @staticmethod
+    @db_session
+    def get_top_3_pizzas_past_month() -> List[Dict[str, Any]]:
+        """Get the top 3 pizzas sold in the past month by quantity."""
+        past_month = datetime.now() - timedelta(days=30)
+        top_pizzas = select((p, sum(opr.quantity)) for p in Pizza for opr in p.order for o in Order
+                            if opr.order == o and o.created_at >= past_month) \
+                            .order_by(-2)[:3]
+        return [{'pizza': p, 'total_quantity': qty} for p, qty in top_pizzas]

@@ -1,6 +1,7 @@
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional
 from pony.orm import db_session, select, desc, count
+import re
 
 from .models import (
     IngredientType, ExtraType, DeliveryStatus, OrderStatus,
@@ -163,33 +164,75 @@ class QueryManager:
         user = User.get(username=username)
         if not user:
             return False
-
-        # Update base fields if provided
+    
+        # Validate and update base fields if provided
         if email is not None:
+            # Validate email format
+            if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+                raise ValueError("Invalid email format")
+            # Check uniqueness
+            existing = User.get(email=email)
+            if existing and existing != user:
+                raise ValueError("Email already in use")
             user.email = email
+    
         if phone is not None:
+            # Validate phone format
+            clean = re.sub(r'[^\d+]', '', phone)
+            if clean.startswith('+'):
+                if not re.match(r'^\+[1-9][0-9]{6,14}$', clean):
+                    raise ValueError("Invalid international phone format")
+            else:
+                if not re.match(r'^[0-9]{10}$', clean):
+                    raise ValueError("Domestic phone must be exactly 10 digits")
             user.phone = phone
+    
         if address is not None:
+            if not address.strip():
+                raise ValueError("Address cannot be empty")
             user.address = address
+    
         if postal_code is not None:
+            if not postal_code.strip():
+                raise ValueError("Postal code cannot be empty")
             user.postalCode = postal_code
+    
         if birthdate is not None:
+            if not isinstance(birthdate, date):
+                raise ValueError("Birthdate must be a date object")
+            if birthdate > date.today():
+                raise ValueError("Birthdate cannot be in the future")
             user.birthdate = birthdate
+    
         if gender is not None:
+            if not gender.strip():
+                raise ValueError("Gender cannot be empty")
             user.Gender = gender
-
-        # Update type-specific fields if they exist on the user and are provided
+    
+        # Validate and update type-specific fields if they exist on the user and are provided
         if hasattr(user, 'birthday_order') and birthday_order is not None:
+            if not isinstance(birthday_order, bool):
+                raise ValueError("Birthday order must be a boolean")
             user.birthday_order = birthday_order
+    
         if hasattr(user, 'loyalty_points') and loyalty_points is not None:
+            if not isinstance(loyalty_points, int) or loyalty_points < 0:
+                raise ValueError("Loyalty points must be a non-negative integer")
             user.loyalty_points = loyalty_points
+    
         if hasattr(user, 'position') and position is not None:
+            if not position.strip():
+                raise ValueError("Position cannot be empty")
             user.position = position
+    
         if hasattr(user, 'salary') and salary is not None:
+            if not isinstance(salary, (int, float)) or salary <= 0:
+                raise ValueError("Salary must be a positive number")
             user.salary = salary
+    
         if hasattr(user, 'status') and status is not None:
             user.status = status
-
+    
         return True
 
 # -=-=-=-=-=- ORDER QUERIES -=-=-=-=-=- #

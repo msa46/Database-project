@@ -501,7 +501,7 @@ class QueryManager:
     def get_top_3_pizzas_past_month() -> List[Dict[str, Any]]:
         """Get the top 3 pizzas sold in the past month by quantity."""
         past_month = datetime.now() - timedelta(days=30)
-        top_pizzas = select((p, sum(opr.quantity)) for p in Pizza for opr in p.order
-                            if opr.order.created_at >= past_month) \
+        top_pizzas = select((p, sum(opr.quantity)) for p in Pizza for opr in p.order for o in Order
+                            if opr.order == o and o.created_at >= past_month) \
                             .order_by(-2)[:3]
         return [{'pizza': p, 'total_quantity': qty} for p, qty in top_pizzas]

@@ -67,83 +67,128 @@ class QueryManager:
         with_vat = with_margin * 1.09
         return round(with_vat, 2)
 
-# -=-=-=-=-=- CUSTOMER QUERIES -=-=-=-=-=- #
-#TODO: THIS IS FOR CUSTOMERS ONLY, EMPLOYEES ARE NOT HANDLED HERE. MAYBE THEY SHOULD BE?
+# -=-=-=-=-=- USER QUERIES -=-=-=-=-=- #
 
-    #TODO: Check if this has all the options needed, since there are many optional fields
     @staticmethod
     @db_session
-    def add_customer(username: str, 
-                     email: str, 
-                     password: str, 
-                     birthday_order: bool, 
-                     loyalty_points: int = 0, 
-                     phone: Optional[str] = None, 
-                     address: Optional[str] = None, 
-                     postal_code: Optional[str] = None, 
-                     birthdate: Optional[date] = None, 
-                     gender: Optional[str] = None) -> Customer:
-        """Add a new customer to the database with all available options."""
-        customer_data = {
+    def add_user(username: str,
+                 email: str,
+                 password: str,
+                 phone: Optional[str] = None,
+                 address: Optional[str] = None,
+                 postal_code: Optional[str] = None,
+                 birthdate: Optional[date] = None,
+                 gender: Optional[str] = None,
+                 # Customer specific
+                 birthday_order: Optional[bool] = None,
+                 loyalty_points: Optional[int] = None,
+                 # Employee specific
+                 position: Optional[str] = None,
+                 salary: Optional[float] = None,
+                 # DeliveryPerson specific
+                 status: Optional[DeliveryStatus] = None) -> User:
+        """Add a new user to the database. The type of user (Customer, Employee, DeliveryPerson, or base User)
+        is determined by the parameters provided. Always creates a base User first, then 'updates' to the specific type."""
+
+        # Base user data
+        user_data = {
             'username': username,
-            'email': email,
-            'birthday_order': birthday_order,
-            'loyalty_points': loyalty_points
+            'email': email
         }
 
-        # Add optional fields only if they are provided
+        # Add optional base fields
         if phone is not None:
-            customer_data['phone'] = phone
+            user_data['phone'] = phone
         if address is not None:
-            customer_data['address'] = address
+            user_data['address'] = address
         if postal_code is not None:
-            customer_data['postalCode'] = postal_code
+            user_data['postalCode'] = postal_code
         if birthdate is not None:
-            customer_data['birthdate'] = birthdate
+            user_data['birthdate'] = birthdate
         if gender is not None:
-            customer_data['Gender'] = gender
+            user_data['Gender'] = gender
 
-        customer = Customer(**customer_data)
-        customer.set_password(password)
-        return customer
+        # Determine user type based on provided parameters
+        if status is not None:
+            # DeliveryPerson
+            user_data['position'] = position or ''
+            user_data['salary'] = salary or 0.0
+            user_data['status'] = status
+            user = DeliveryPerson(**user_data)
+        elif position is not None or salary is not None:
+            # Employee
+            user_data['position'] = position or ''
+            user_data['salary'] = salary or 0.0
+            user = Employee(**user_data)
+        elif birthday_order is not None or loyalty_points is not None:
+            # Customer
+            user_data['birthday_order'] = birthday_order if birthday_order is not None else False
+            user_data['loyalty_points'] = loyalty_points if loyalty_points is not None else 0
+            user = Customer(**user_data)
+        else:
+            # Base User
+            user = User(**user_data)
 
-    #TODO: Check if everything gets removed properly (orders, discount codes, etc.)
+        user.set_password(password)
+        return user
+
     @staticmethod
     @db_session
-    def remove_customer(username: str) -> bool:
-        """Remove a customer from the database by username."""
-        customer = Customer.get(username=username)
-        if customer:
-            customer.delete()
+    def remove_user(username: str) -> bool:
+        """Remove a user from the database by username. Works for any user type (Customer, Employee, DeliveryPerson, or base User)."""
+        user = User.get(username=username)
+        if user:
+            user.delete()
             return True
         return False
 
-    #TODO: Check if this has all the options needed, since there are many optional fields
     @staticmethod
     @db_session
-    def update_customer(username: str, 
-                        email: Optional[str] = None, 
-                        phone: Optional[str] = None, 
-                        address: Optional[str] = None, 
-                        postal_code: Optional[str] = None, 
-                        birthdate: Optional[date] = None
-                    ) -> bool:
-        """Update a customer's information."""
-        customer = Customer.get(username=username)
-        if not customer:
+    def update_user(username: str,
+                    email: Optional[str] = None,
+                    phone: Optional[str] = None,
+                    address: Optional[str] = None,
+                    postal_code: Optional[str] = None,
+                    birthdate: Optional[date] = None,
+                    gender: Optional[str] = None,
+                    # Customer specific
+                    birthday_order: Optional[bool] = None,
+                    loyalty_points: Optional[int] = None,
+                    # Employee specific
+                    position: Optional[str] = None,
+                    salary: Optional[float] = None,
+                    # DeliveryPerson specific
+                    status: Optional[DeliveryStatus] = None) -> bool:
+        """Update a user's information. Works for any user type and updates fields that exist on the user."""
+        user = User.get(username=username)
+        if not user:
             return False
 
-        # Update fields if provided
+        # Update base fields if provided
         if email is not None:
-            customer.email = email
+            user.email = email
         if phone is not None:
-            customer.phone = phone
+            user.phone = phone
         if address is not None:
-            customer.address = address
+            user.address = address
         if postal_code is not None:
-            customer.postalCode = postal_code
+            user.postalCode = postal_code
         if birthdate is not None:
-            customer.birthdate = birthdate
+            user.birthdate = birthdate
+        if gender is not None:
+            user.Gender = gender
+
+        # Update type-specific fields if they exist on the user and are provided
+        if hasattr(user, 'birthday_order') and birthday_order is not None:
+            user.birthday_order = birthday_order
+        if hasattr(user, 'loyalty_points') and loyalty_points is not None:
+            user.loyalty_points = loyalty_points
+        if hasattr(user, 'position') and position is not None:
+            user.position = position
+        if hasattr(user, 'salary') and salary is not None:
+            user.salary = salary
+        if hasattr(user, 'status') and status is not None:
+            user.status = status
 
         return True
 

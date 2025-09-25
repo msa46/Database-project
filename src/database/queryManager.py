@@ -1,6 +1,6 @@
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional
-from pony.orm import db_session, select, desc, count
+from pony.orm import db_session, select, desc, count, avg
 import re
 
 from .models import (
@@ -498,6 +498,7 @@ class QueryManager:
     # Add/remove staff order (if they are able to order pizza)
     # (OPTIONAL: Create earnings report, filtered by Driver workload, ingredients usage and costing)
     
+# Sum of earnings:
     @staticmethod
     @db_session
     def get_earnings_by_gender(gender: str) -> float:
@@ -518,6 +519,31 @@ class QueryManager:
     def get_earnings_by_postal_code(postal_code: str) -> float:
         """Get total earnings (salaries) for employees filtered by postal code."""
         return sum(e.salary for e in Employee if e.postalCode == postal_code)
+
+# Average of earnings:
+    @staticmethod
+    @db_session
+    def get_average_salary_by_gender(gender: str) -> float:
+        """Get average salary for employees filtered by gender."""
+        result = select(avg(e.salary) for e in Employee if e.Gender == gender).first()
+        return result or 0.0
+
+    @staticmethod
+    @db_session
+    def get_average_salary_by_age_group(min_age: int, max_age: int) -> float:
+        """Get average salary for employees filtered by age group."""
+        today = date.today()
+        result = select(avg(e.salary) for e in Employee
+                        if e.birthdate and (today.year - e.birthdate.year) >= min_age
+                        and (today.year - e.birthdate.year) <= max_age).first()
+        return result or 0.0
+
+    @staticmethod
+    @db_session
+    def get_average_salary_by_postal_code(postal_code: str) -> float:
+        """Get average salary for employees filtered by postal code."""
+        result = select(avg(e.salary) for e in Employee if e.postalCode == postal_code).first()
+        return result or 0.0
 
 
 # -=-=-=-=-=- REPORT QUERIES -=-=-=-=-=- #

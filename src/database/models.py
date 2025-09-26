@@ -168,7 +168,7 @@ class Order(db.Entity):
 
 class DiscountCode(db.Entity):
     code = PrimaryKey(str)
-    percentage = Required(float)
+    percentage = Required(float) # If percentage is 0.0, then its a birthday code. This would mean that you get 1 free pizza (cheapest) and 1 free drink
     valid_until = Required(datetime)
     valid_from = Optional(datetime)
     used = Required(bool, default=False)

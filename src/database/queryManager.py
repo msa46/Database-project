@@ -446,18 +446,15 @@ class QueryManager:
 # -=-=-=-=-=- LOYALTY QUERIES -=-=-=-=-=- #
 
 # 10 pizzas -> 10% off next order:
-    # Method gets called after order is completed, checks if user is Customer, increments loyalty points,
-    # if points reach 10, resets to 0 and creates a discount code for 10% off next order
+    # Method gets called after order is completed:
+    # - checks if: user is Customer
+    # - increments loyalty points
+    # - if points reach 10, resets to 0 and creates a discount code for 10% (with expirey date of 1 month)
 
 # Birthday -> 1 free pizza (cheapest) and 1 free drink
-
-    # Method gets called to add birthday coupon to order if:
-    #  - user is Customer
-    #  - has birthday_order disabled (if enabled, they already have the discount code active and can stop this query)
-    #  - today is user's birthday 
-    #  - checks previous orders on their birthday to see if they have already used birthday coupon this year
-    # if all conditions met, sets birthday_order to True for this user
-    # when orderering it checks if birthday_order is True and then adds cheapest pizza and cheapest drink to order for free
+    # At the start of each day:
+    # - check for customers with birthday today
+    # - If so: create a discount code for 1 free pizza and 1 free drink (with expirey date of 1 week)
 
 
 # -=-=-=-=-=- DELIVERY QUERIES -=-=-=-=-=- #

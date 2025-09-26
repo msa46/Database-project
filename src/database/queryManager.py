@@ -68,6 +68,12 @@ class QueryManager:
         with_vat = with_margin * 1.09
         return round(with_vat, 2)
 
+    @staticmethod
+    @db_session
+    def count_extras_by_type(extra_type: ExtraType) -> int:
+        """Example: Count extras by type."""
+        return Extra.select(e for e in Extra if e.type == extra_type).count()
+
 # -=-=-=-=-=- USER QUERIES -=-=-=-=-=- #
 
     @staticmethod
@@ -436,12 +442,6 @@ class QueryManager:
             'items': items,
             'discount': discount_info
         }
-
-    @staticmethod
-    @db_session
-    def count_extras_by_type(extra_type: ExtraType) -> int:
-        """Example: Count extras by type."""
-        return Extra.select(e for e in Extra if e.type == extra_type).count()
 
 # -=-=-=-=-=- LOYALTY QUERIES -=-=-=-=-=- #
 

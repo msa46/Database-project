@@ -2,6 +2,7 @@ from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional
 from pony.orm import db_session, select, desc, count, avg
 import re
+import secrets
 
 from .models import (
     IngredientType, ExtraType, DeliveryStatus, OrderStatus,
@@ -327,6 +328,7 @@ class QueryManager:
                     raise ValueError(f"Extra with id {extra_id} not found")
                 order.extras.add(extra)
 
+#TODO: Check discount logic and possibly move this to a subquery in the loyalty section
         # Handle discount code if provided
         if discount_code:
             dc = DiscountCode.get(code=discount_code)
@@ -424,7 +426,8 @@ class QueryManager:
                 'unit_price': round(extra.price, 2),
                 'subtotal': round(extra.price, 2)
             })
-
+            
+#TODO: Check discount logic and possibly move this to a subquery in the loyalty section
         # Apply discount if applicable
         discount_info = None
         if order.user.discount_code:
@@ -449,13 +452,67 @@ class QueryManager:
     # Method gets called after order is completed:
     # - checks if: user is Customer
     # - increments loyalty points
-    # - if points reach 10, resets to 0 and creates a discount code for 10% (with expirey date of 1 month)
+    # - if points reach 10, resets to 0 and creates a discount code for 10% (with expiry date of 1 month)
+
+    @staticmethod
+    @db_session
+    def process_loyalty_points(user_id: int) -> Optional[DiscountCode]:
+        """Process loyalty points after an order is completed.
+        Increments loyalty points for customers. If points reach 10,
+        resets to 0 and creates a 10% discount code valid for 1 month."""
+        user = User.get(id=user_id)
+        if not user or not isinstance(user, Customer):
+            return None
+
+        user.loyalty_points += 1
+
+        if user.loyalty_points >= 10:
+            now = datetime.now()
+            valid_until = now + timedelta(days=30)
+            code = secrets.token_hex(8).upper()
+            dc = DiscountCode(
+                code=code,
+                percentage=10.0,
+                valid_until=valid_until,
+                valid_from=now,
+                used=False
+            )
+            user.loyalty_points = 0
+            return dc
+
+        return None
 
 # Birthday -> 1 free pizza (cheapest) and 1 free drink
     # At the start of each day:
     # - check for customers with birthday today
-    # - If so: create a discount code for 1 free pizza and 1 free drink (with expirey date of 1 week)
+    # - If so: create a discount code for 1 free pizza and 1 free drink (with expiry date of 1 week)
 
+
+#PLEASE NOTE THAT: when precentage is 0.0, this means that its a birthday code. This would mean that you get 1 free pizza (cheapest) and 1 free drink
+    @staticmethod
+    @db_session
+    def process_birthday_discounts() -> List[DiscountCode]:
+        """Process birthday discounts at the start of each day.
+        Finds customers with birthday today and creates discount codes
+        for 1 free pizza and 1 free drink (percentage set to 0, special handling required)."""
+        today = date.today()
+        birthday_customers = Customer.select(c for c in Customer
+                                             if c.birthdate and c.birthdate.month == today.month
+                                             and c.birthdate.day == today.day)
+        discount_codes = []
+        for customer in birthday_customers:
+            now = datetime.now()
+            valid_until = now + timedelta(days=7)
+            code = secrets.token_hex(8).upper()
+            dc = DiscountCode(
+                code=code,
+                percentage=0.0,  # Special case: free pizza and drink, not percentage-based
+                valid_until=valid_until,
+                valid_from=now,
+                used=False
+            )
+            discount_codes.append(dc)
+        return discount_codes
 
 # -=-=-=-=-=- DELIVERY QUERIES -=-=-=-=-=- #
 

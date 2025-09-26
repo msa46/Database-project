@@ -252,6 +252,7 @@ class QueryManager:
             return []
         return list(user.orders)
     
+#TODO: implement discount capability
     @staticmethod
     @db_session
     def create_order(
@@ -328,24 +329,7 @@ class QueryManager:
                     raise ValueError(f"Extra with id {extra_id} not found")
                 order.extras.add(extra)
 
-#TODO: Check discount logic and possibly move this to a subquery in the loyalty section
-        # Handle discount code if provided
-        if discount_code:
-            dc = DiscountCode.get(code=discount_code)
-            if not dc:
-                raise ValueError(f"Discount code '{discount_code}' not found")
-            now = datetime.now()
-            if dc.used:
-                raise ValueError("Discount code has already been used")
-            if dc.valid_from and now < dc.valid_from:
-                raise ValueError("Discount code is not yet valid")
-            if now > dc.valid_until:
-                raise ValueError("Discount code has expired")
-            dc.used = True
-            dc.used_by = user
-            # Optionally assign to user if not already set
-            if not user.discount_code:
-                user.discount_code = dc
+#TODO: Add discount code validation (check existence, validity period, usage)
 
         return order
 
@@ -392,6 +376,7 @@ class QueryManager:
         order.delete()
         return True
     
+#TODO: implement/adjust discount capability
     @staticmethod
     @db_session
     def get_order_confirmation(order_id: int) -> Optional[Dict[str, Any]]:
@@ -448,12 +433,6 @@ class QueryManager:
 
 # -=-=-=-=-=- LOYALTY QUERIES -=-=-=-=-=- #
 
-# 10 pizzas -> 10% off next order:
-    # Method gets called after order is completed:
-    # - checks if: user is Customer
-    # - increments loyalty points
-    # - if points reach 10, resets to 0 and creates a discount code for 10% (with expiry date of 1 month)
-
     @staticmethod
     @db_session
     def process_loyalty_points(user_id: int) -> Optional[DiscountCode]:
@@ -482,12 +461,6 @@ class QueryManager:
 
         return None
 
-# Birthday -> 1 free pizza (cheapest) and 1 free drink
-    # At the start of each day:
-    # - check for customers with birthday today
-    # - If so: create a discount code for 1 free pizza and 1 free drink (with expiry date of 1 week)
-
-
 #PLEASE NOTE THAT: when precentage is 0.0, this means that its a birthday code. This would mean that you get 1 free pizza (cheapest) and 1 free drink
     @staticmethod
     @db_session
@@ -513,6 +486,42 @@ class QueryManager:
             )
             discount_codes.append(dc)
         return discount_codes
+
+    @staticmethod
+    @db_session
+    def get_discount_code_details(code: str) -> Optional[Dict[str, Any]]:
+        """Get detailed information about a discount code."""
+        dc = DiscountCode.get(code=code)
+        if not dc:
+            return None
+
+        now = datetime.now()
+        is_valid = (not dc.used and
+                   (dc.valid_from is None or dc.valid_from <= now) and
+                   dc.valid_until >= now)
+
+        details = {
+            'code': dc.code,
+            'percentage': dc.percentage,
+            'valid_from': dc.valid_from,
+            'valid_until': dc.valid_until,
+            'used': dc.used,
+            'used_by': dc.used_by.username if dc.used_by else None,
+            'is_valid': is_valid
+        }
+
+        # Determine discount type
+        if dc.percentage == 0.0:
+            details['type'] = 'birthday'
+            details['description'] = '1 free pizza (cheapest) and 1 free drink'
+        elif dc.percentage == 10.0:
+            details['type'] = 'loyalty'
+            details['description'] = '10% off next order'
+        else:
+            details['type'] = 'general'
+            details['description'] = f'{dc.percentage}% off'
+
+        return details
 
 # -=-=-=-=-=- DELIVERY QUERIES -=-=-=-=-=- #
 

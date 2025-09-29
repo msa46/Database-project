@@ -1,6 +1,6 @@
 from datetime import datetime, date, time
 from enum import Enum
-from pony.orm import Required, PrimaryKey, Optional as PonyOptional, Set, db_session
+from pony.orm import Required, PrimaryKey, Optional as PonyOptional, Set, db_session, commit
 from .db import db
 
 import re
@@ -196,6 +196,9 @@ class User(db.Entity):
                 user = DeliveryPerson(**delivery_person_data)
             else:
                 raise ValueError(f"Invalid user type: {user_type}. Must be 'customer', 'employee', or 'delivery_person'")
+            
+            # Commit the transaction to ensure the user ID is populated
+            commit()
             
             return user
         except Exception as e:

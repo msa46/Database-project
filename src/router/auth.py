@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, status, Depends, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, field_validator, ValidationInfo
 from typing import Optional
-from pony.orm import db_session, select
+from pony.orm import db_session, select, commit
 from datetime import datetime, timedelta, timezone
 import jwt
 import os
@@ -181,6 +181,10 @@ def signup(user_data: UserSignupRequest):
                 salary=user_data.salary
             )
             logger.debug(f"{user_data.user_type.capitalize()} created successfully with ID: {user.id}")
+            
+            # Explicitly commit the transaction to ensure the user ID is populated
+            commit()
+            logger.debug(f"Transaction committed, user ID: {user.id}")
         except ValueError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

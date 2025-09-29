@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, field_validator, ValidationInfo
 from typing import Optional
@@ -81,7 +81,7 @@ class UserResponse(BaseModel):
 # JWT configuration
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 7 * 24 * 60 # 7 days 
 
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(
@@ -217,7 +217,7 @@ def signup(user_data: UserSignupRequest):
 
 @router.post("/login", response_model=TokenResponse)
 @db_session
-def login(credentials: UserLoginRequest):
+def login(credentials: UserLoginRequest, response: Response):
     """Authenticate user and return access token"""
     try:
         # Find user by username or email
@@ -243,6 +243,17 @@ def login(credentials: UserLoginRequest):
         access_token, expire_time = create_access_token(
             data={"sub": user.username, "user_id": user.id},
             expires_delta=access_token_expires
+        )
+
+        # Set the access token as an HTTP-only cookie
+        response.set_cookie(
+            key="access_token",
+            value=access_token,
+            httponly=True,
+            secure=True,  # Set to False for development without HTTPS
+            samesite="strict",
+            max_age=int(access_token_expires.total_seconds()),  # 30 minutes
+            expires=expire_time
         )
 
         return TokenResponse(
@@ -309,7 +320,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 
 @router.post("/refresh", response_model=TokenResponse)
 @db_session
-def refresh_token(token: str = Depends(oauth2_scheme)):
+def refresh_token(token: str = Depends(oauth2_scheme), response: Response = None):
     """Refresh access token"""
     try:
         payload = verify_token(token)
@@ -320,6 +331,18 @@ def refresh_token(token: str = Depends(oauth2_scheme)):
             data={"sub": payload.get("sub"), "user_id": payload.get("user_id")},
             expires_delta=access_token_expires
         )
+
+        # Set the new access token as an HTTP-only cookie
+        if response:
+            response.set_cookie(
+                key="access_token",
+                value=new_access_token,
+                httponly=True,
+                secure=True,  # Set to False for development without HTTPS
+                samesite="strict",
+                max_age=int(access_token_expires.total_seconds()),  # 30 minutes
+                expires=expire_time
+            )
 
         return TokenResponse(
             access_token=new_access_token,

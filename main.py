@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.database.db import init_db
 from src.router.auth import router as auth_router
+from src.router.secured import router as secured_router
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -37,6 +38,10 @@ except Exception as e:
 # Include authentication router
 logger.debug("Including authentication router")
 app.include_router(auth_router)
+
+# Include secured router
+logger.debug("Including secured router")
+app.include_router(secured_router)
 
 
 @app.get("/")

@@ -143,6 +143,48 @@ class CustomerManager(UserManager):
             raise
     
     @staticmethod
+    def create_full_user(username: str, email: str, password: str, address: str, postalCode: str,
+                        phone: str, Gender: str, birthdate: Optional[date] = None,
+                        loyalty_points: int = 0, birthday_order: bool = False) -> Customer:
+        """Create a complete customer with all required user fields in one operation."""
+        try:
+            logger.debug(f"Creating full customer user with username: {username}, email: {email}")
+
+            # Hash the password securely during creation
+            logger.debug("Hashing password securely")
+            hashed_password, salt = User.hash_password(password)
+
+            # Create customer with all user fields and customer-specific fields
+            logger.debug("Creating customer entity with all fields")
+            customer_data = {
+                'username': username,
+                'email': email,
+                'password_hash': hashed_password,
+                'salt': salt,
+                'address': address,
+                'postalCode': postalCode,
+                'phone': phone,
+                'Gender': Gender,
+                'birthdate': birthdate,
+                'loyalty_points': loyalty_points,
+                'birthday_order': birthday_order
+            }
+
+            logger.debug(f"Customer data: {customer_data}")
+            customer = Customer(**customer_data)
+            logger.debug(f"Customer entity created with ID: {customer.id}")
+
+            # Commit the transaction to ensure the customer is saved to the database
+            commit()
+            logger.debug(f"Customer committed to database with ID: {customer.id}")
+
+            return customer
+        except Exception as e:
+            logger.error(f"Error creating customer: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
+    
+    @staticmethod
     def create_batch(customers_data: List[Dict[str, Any]]) -> List[Customer]:
         return BaseManager.create_entities_batch(Customer, customers_data)
 
@@ -175,6 +217,48 @@ class EmployeeManager(UserManager):
         employee.set_password(password)
         
         return employee
+    
+    @staticmethod
+    def create_full_user(username: str, email: str, password: str, address: str, postalCode: str,
+                        phone: str, Gender: str, position: str, salary: float,
+                        birthdate: Optional[date] = None) -> Employee:
+        """Create a complete employee with all required user fields in one operation."""
+        try:
+            logger.debug(f"Creating full employee user with username: {username}, email: {email}")
+
+            # Hash the password securely during creation
+            logger.debug("Hashing password securely")
+            hashed_password, salt = User.hash_password(password)
+
+            # Create employee with all user fields and employee-specific fields
+            logger.debug("Creating employee entity with all fields")
+            employee_data = {
+                'username': username,
+                'email': email,
+                'password_hash': hashed_password,
+                'salt': salt,
+                'address': address,
+                'postalCode': postalCode,
+                'phone': phone,
+                'Gender': Gender,
+                'birthdate': birthdate,
+                'position': position,
+                'salary': salary
+            }
+
+            logger.debug(f"Employee data: {employee_data}")
+            employee = Employee(**employee_data)
+            logger.debug(f"Employee entity created with ID: {employee.id}")
+
+            # Commit the transaction to ensure the employee is saved to the database
+            commit()
+            logger.debug(f"Employee committed to database with ID: {employee.id}")
+
+            return employee
+        except Exception as e:
+            logger.error(f"Error creating employee: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
     
     @staticmethod
     def create_batch(employees_data: List[Dict[str, Any]]) -> List[Employee]:
@@ -211,6 +295,50 @@ class DeliveryPersonManager(EmployeeManager):
         delivery_person.set_password(password)
         
         return delivery_person
+    
+    @staticmethod
+    def create_full_user(username: str, email: str, password: str, address: str, postalCode: str,
+                        phone: str, Gender: str, position: str, salary: float,
+                        status: DeliveryStatus = DeliveryStatus.Available,
+                        birthdate: Optional[date] = None) -> DeliveryPerson:
+        """Create a complete delivery person with all required user fields in one operation."""
+        try:
+            logger.debug(f"Creating full delivery person user with username: {username}, email: {email}")
+
+            # Hash the password securely during creation
+            logger.debug("Hashing password securely")
+            hashed_password, salt = User.hash_password(password)
+
+            # Create delivery person with all user fields and delivery person-specific fields
+            logger.debug("Creating delivery person entity with all fields")
+            delivery_person_data = {
+                'username': username,
+                'email': email,
+                'password_hash': hashed_password,
+                'salt': salt,
+                'address': address,
+                'postalCode': postalCode,
+                'phone': phone,
+                'Gender': Gender,
+                'birthdate': birthdate,
+                'position': position,
+                'salary': salary,
+                'status': status
+            }
+
+            logger.debug(f"Delivery person data: {delivery_person_data}")
+            delivery_person = DeliveryPerson(**delivery_person_data)
+            logger.debug(f"Delivery person entity created with ID: {delivery_person.id}")
+
+            # Commit the transaction to ensure the delivery person is saved to the database
+            commit()
+            logger.debug(f"Delivery person committed to database with ID: {delivery_person.id}")
+
+            return delivery_person
+        except Exception as e:
+            logger.error(f"Error creating delivery person: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
     
     @staticmethod
     def create_batch(delivery_persons_data: List[Dict[str, Any]]) -> List[DeliveryPerson]:

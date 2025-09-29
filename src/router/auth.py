@@ -9,8 +9,7 @@ import os
 import logging
 import traceback
 
-from ..database.models import User, Customer
-from ..database.managers import CustomerManager
+from ..database.models import User, Customer, Employee, DeliveryPerson, DeliveryStatus
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -22,11 +21,15 @@ class UserSignupRequest(BaseModel):
     email: EmailStr
     password: str
     confirm_password: str
+    user_type: str = "customer"  # Can be "customer", "employee", or "delivery_person"
     birthdate: Optional[datetime] = None
     address: str
     postalCode: str
     phone: str
     gender: str
+    # Employee/Delivery person specific fields
+    position: Optional[str] = None
+    salary: Optional[float] = None
 
     @field_validator('confirm_password')
     @classmethod
@@ -43,6 +46,14 @@ class UserSignupRequest(BaseModel):
             raise ValueError('Username must be at least 3 characters long')
         if len(v) > 50:
             raise ValueError('Username must be less than 50 characters long')
+        return v
+
+    @field_validator('user_type')
+    @classmethod
+    def validate_user_type(cls, v: str) -> str:
+        valid_types = ['customer', 'employee', 'delivery_person']
+        if v not in valid_types:
+            raise ValueError(f'Invalid user type. Must be one of: {", ".join(valid_types)}')
         return v
 
 class UserLoginRequest(BaseModel):
@@ -148,29 +159,43 @@ def signup(user_data: UserSignupRequest):
                 detail="Email already registered"
             )
 
-        # Create new customer account
-        logger.debug("Creating new customer account")
-        customer = CustomerManager.create(
-            username=user_data.username,
-            email=user_data.email,
-            password=user_data.password,
-            birthdate=user_data.birthdate,
-            address=user_data.address,
-            postalCode=user_data.postalCode,
-            phone=user_data.phone,
-            Gender=user_data.gender
-        )
-        logger.debug(f"Customer created successfully with ID: {customer.id}")
+        # Create user account using the unified create_full_user method
+        logger.debug(f"Creating new {user_data.user_type} account")
+        # Convert datetime to date if birthdate is provided
+        birthdate = None
+        if user_data.birthdate:
+            birthdate = user_data.birthdate.date() if isinstance(user_data.birthdate, datetime) else user_data.birthdate
+        
+        try:
+            user = User.create_full_user(
+                username=user_data.username,
+                email=user_data.email,
+                password=user_data.password,
+                address=user_data.address,
+                postalCode=user_data.postalCode,
+                phone=user_data.phone,
+                Gender=user_data.gender,
+                user_type=user_data.user_type,
+                birthdate=birthdate,
+                position=user_data.position,
+                salary=user_data.salary
+            )
+            logger.debug(f"{user_data.user_type.capitalize()} created successfully with ID: {user.id}")
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            )
 
         return UserResponse(
-            id=customer.id,
-            username=customer.username,
-            email=customer.email,
-            birthdate=customer.birthdate,
-            address=customer.address,
-            postalCode=customer.postalCode,
-            phone=customer.phone,
-            gender=customer.Gender
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            birthdate=user.birthdate,
+            address=user.address,
+            postalCode=user.postalCode,
+            phone=user.phone,
+            gender=user.Gender
         )
 
     except ValueError as e:

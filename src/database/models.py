@@ -1,6 +1,6 @@
 from datetime import datetime, date, time
 from enum import Enum
-from pony.orm import Required, PrimaryKey, Optional, Set, db_session
+from pony.orm import Required, PrimaryKey, Optional as PonyOptional, Set, db_session
 from .db import db
 
 import re
@@ -43,7 +43,7 @@ class Pizza(db.Entity):
     name = Required(str)
     ingredients = Set("Ingredient")
     order = Set(OrderPizzaRelation)
-    description = Optional(str)
+    description = PonyOptional(str)
 
 
 class Extra(db.Entity):
@@ -66,12 +66,12 @@ class User(db.Entity):
     id = PrimaryKey(int, auto=True)
     username = Required(str, unique=True)
     email = Required(str, unique=True)
-    birthdate = Optional(date)
+    birthdate = PonyOptional(date)
     address = Required(str)
     postalCode = Required(str)
     phone = Required(str)
     orders = Set("Order")
-    discount_code = Optional("DiscountCode")
+    discount_code = PonyOptional("DiscountCode")
     Gender = Required(str)
     password_hash = Required(str)
     salt = Required(str)  # Store the unique salt for each user
@@ -141,6 +141,65 @@ class User(db.Entity):
             else:
                 if not re.match(r'^[0-9]{10}$', clean):
                     raise ValueError("Domestic phone must be exactly 10 digits")
+    
+    @staticmethod
+    @db_session
+    def create_full_user(username: str, email: str, password: str, address: str, postalCode: str,
+                        phone: str, Gender: str, user_type: str = "customer",
+                        birthdate: date | None = None, position: str | None = None,
+                        salary: float | None = None, loyalty_points: int = 0,
+                        birthday_order: bool = False, status: DeliveryStatus = DeliveryStatus.Available):
+        """Create a complete user of any type with all required fields in one operation."""
+        try:
+            # Hash the password securely during creation
+            hashed_password, salt = User.hash_password(password)
+            
+            # Create base user data
+            user_data = {
+                'username': username,
+                'email': email,
+                'password_hash': hashed_password,
+                'salt': salt,
+                'address': address,
+                'postalCode': postalCode,
+                'phone': phone,
+                'Gender': Gender,
+                'birthdate': birthdate
+            }
+            
+            # Create user based on type
+            if user_type == "customer":
+                customer_data = {
+                    **user_data,
+                    'loyalty_points': loyalty_points,
+                    'birthday_order': birthday_order
+                }
+                user = Customer(**customer_data)
+            elif user_type == "employee":
+                if not position or not salary:
+                    raise ValueError("Position and salary are required for employee accounts")
+                employee_data = {
+                    **user_data,
+                    'position': position,
+                    'salary': salary
+                }
+                user = Employee(**employee_data)
+            elif user_type == "delivery_person":
+                if not position or not salary:
+                    raise ValueError("Position and salary are required for delivery person accounts")
+                delivery_person_data = {
+                    **user_data,
+                    'position': position,
+                    'salary': salary,
+                    'status': status
+                }
+                user = DeliveryPerson(**delivery_person_data)
+            else:
+                raise ValueError(f"Invalid user type: {user_type}. Must be 'customer', 'employee', or 'delivery_person'")
+            
+            return user
+        except Exception as e:
+            raise e
 
 
 
@@ -162,14 +221,14 @@ class Order(db.Entity):
     extras = Set(Extra)
     status = Required(py_type=OrderStatus, sql_type='VARCHAR')
     created_at = Required(datetime, default=datetime.now)
-    delivered_at = Optional(datetime)
-    delivery_person = Optional(DeliveryPerson)
+    delivered_at = PonyOptional(datetime)
+    delivery_person = PonyOptional(DeliveryPerson)
     postalCode = Required(str)
 
 class DiscountCode(db.Entity):
     code = PrimaryKey(str)
     percentage = Required(float) # If percentage is 0.0, then its a birthday code. This would mean that you get 1 free pizza (cheapest) and 1 free drink
     valid_until = Required(datetime)
-    valid_from = Optional(datetime)
+    valid_from = PonyOptional(datetime)
     used = Required(bool, default=False)
-    used_by = Optional(User)
+    used_by = PonyOptional(User)

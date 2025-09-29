@@ -1,9 +1,14 @@
 from typing import Union
+import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.database.db import init_db
 from src.router.auth import router as auth_router
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Pizza Delivery API",
@@ -21,9 +26,16 @@ app.add_middleware(
 )
 
 # Initialize database
-init_db()
+logger.debug("Initializing database...")
+try:
+    init_db()
+    logger.debug("Database initialized successfully")
+except Exception as e:
+    logger.error(f"Error initializing database: {str(e)}")
+    raise
 
 # Include authentication router
+logger.debug("Including authentication router")
 app.include_router(auth_router)
 
 

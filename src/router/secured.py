@@ -8,7 +8,7 @@ import os
 import logging
 import traceback
 
-from ..database.models import User, Customer, Employee, DeliveryPerson, Pizza
+from ..database.models import User, Customer, Employee, DeliveryPerson, Pizza, Order
 from ..database.queryManager import QueryManager
 from .auth import verify_token, SECRET_KEY, ALGORITHM
 
@@ -32,6 +32,17 @@ class PizzaInfo(BaseModel):
     name: str
     description: Optional[str] = None
 
+class CustomerInfo(BaseModel):
+    id: int
+    username: str
+    email: str
+
+class OrderInfo(BaseModel):
+    id: int
+    status: str
+    created_at: str
+    postal_code: str
+
 class CustomerSpecificResponse(SecuredInfoResponse):
     loyalty_points: int
     birthday_order: bool
@@ -40,9 +51,11 @@ class CustomerSpecificResponse(SecuredInfoResponse):
 class EmployeeSpecificResponse(SecuredInfoResponse):
     position: str
     salary: float
+    customers: List[CustomerInfo] = []
 
 class DeliveryPersonSpecificResponse(EmployeeSpecificResponse):
     status: str
+    orders: List[OrderInfo] = []
 
 # Cookie-based authentication dependency
 async def get_current_user_from_cookie(access_token: Optional[str] = Cookie(None, alias="access_token")):
@@ -188,41 +201,104 @@ async def get_secured_info(
             detail="Failed to retrieve secured information"
         )
 
-@router.get("/customer-dashboard", response_model=CustomerSpecificResponse)
-async def get_customer_dashboard(
-    customer: Customer = Depends(get_current_customer)
+@router.get("/dashboard", response_model=Union[CustomerSpecificResponse, EmployeeSpecificResponse, DeliveryPersonSpecificResponse])
+async def get_dashboard(
+    current_user: dict = Depends(get_current_user_from_cookie)
 ):
-    """Endpoint accessible only by customers"""
+    """Get user dashboard based on user type"""
     try:
-        # Get all available pizzas
         with db_session:
-            pizzas = QueryManager.get_all_pizzas()
-            pizza_info_list = [
-                PizzaInfo(
-                    id=pizza.id,
-                    name=pizza.name,
-                    description=pizza.description if hasattr(pizza, 'description') else None
-                ) for pizza in pizzas
-            ]
-        
-        return CustomerSpecificResponse(
-            message="Customer-specific information",
-            user_type="customer",
-            user_id=customer.id,
-            username=customer.username,
-            email=customer.email,
-            loyalty_points=customer.loyalty_points,
-            birthday_order=customer.birthday_order,
-            available_pizzas=pizza_info_list
-        )
+            # Get the user from database
+            user = User.select(u for u in User if u.username == current_user["username"]).first()
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="User not found"
+                )
+            
+            # Check user type and return appropriate response
+            if isinstance(user, Customer):
+                # Get all available pizzas for customers
+                pizzas = QueryManager.get_all_pizzas()
+                pizza_info_list = [
+                    PizzaInfo(
+                        id=pizza.id,
+                        name=pizza.name,
+                        description=pizza.description if hasattr(pizza, 'description') else None
+                    ) for pizza in pizzas
+                ]
+                
+                return CustomerSpecificResponse(
+                    message="Customer dashboard",
+                    user_type="customer",
+                    user_id=user.id,
+                    username=user.username,
+                    email=user.email,
+                    loyalty_points=user.loyalty_points,
+                    birthday_order=user.birthday_order,
+                    available_pizzas=pizza_info_list
+                )
+            
+            elif isinstance(user, Employee):
+                # Get all customers for employees
+                customers = Customer.select()[:]
+                customer_info_list = [
+                    CustomerInfo(
+                        id=customer.id,
+                        username=customer.username,
+                        email=customer.email
+                    ) for customer in customers
+                ]
+                
+                return EmployeeSpecificResponse(
+                    message="Employee dashboard",
+                    user_type="employee",
+                    user_id=user.id,
+                    username=user.username,
+                    email=user.email,
+                    position=user.position,
+                    salary=user.salary,
+                    customers=customer_info_list
+                )
+            
+            elif isinstance(user, DeliveryPerson):
+                # Get orders for delivery person
+                orders = QueryManager.get_orders_by_user(user.id)
+                order_info_list = [
+                    OrderInfo(
+                        id=order.id,
+                        status=order.status.value,
+                        created_at=order.created_at.isoformat() if order.created_at else "",
+                        postal_code=order.postalCode
+                    ) for order in orders
+                ]
+                
+                return DeliveryPersonSpecificResponse(
+                    message="Delivery person dashboard",
+                    user_type="delivery_person",
+                    user_id=user.id,
+                    username=user.username,
+                    email=user.email,
+                    position=user.position,
+                    salary=user.salary,
+                    status=user.status.value,
+                    orders=order_info_list
+                )
+            
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Unknown user type"
+                )
+                
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unexpected error in get_customer_info: {str(e)}")
+        logger.error(f"Unexpected error in get_dashboard: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve customer information"
+            detail="Failed to retrieve dashboard information"
         )
 
 @router.get("/employee-only", response_model=EmployeeSpecificResponse)

@@ -132,9 +132,9 @@ def verify_token(token: str):
         )
 
 
-@router.post("/signup", response_model=UserResponse)
+@router.post("/signup", response_model=TokenResponse)
 @db_session
-def signup(user_data: UserSignupRequest):
+def signup(user_data: UserSignupRequest, response: Response):
     """Register a new user account"""
     try:
         logger.debug(f"Signup attempt for username: {user_data.username}, email: {user_data.email}")
@@ -191,15 +191,31 @@ def signup(user_data: UserSignupRequest):
                 detail=str(e)
             )
 
-        return UserResponse(
-            id=user.id,
+        # Create access token for the newly registered user
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token, expire_time = create_access_token(
+            data={"sub": user.username, "user_id": user.id},
+            expires_delta=access_token_expires
+        )
+
+        # Set the access token as an HTTP-only cookie
+        response.set_cookie(
+            key="access_token",
+            value=access_token,
+            httponly=True,
+            secure=True,  # Set to False for development without HTTPS
+            samesite="strict",
+            max_age=int(access_token_expires.total_seconds()),
+            expires=expire_time
+        )
+
+        return TokenResponse(
+            access_token=access_token,
+            token_type="bearer",
+            expires_in=int(access_token_expires.total_seconds()),
+            user_id=user.id,
             username=user.username,
-            email=user.email,
-            birthdate=user.birthdate,
-            address=user.address,
-            postalCode=user.postalCode,
-            phone=user.phone,
-            gender=user.Gender
+            email=user.email
         )
 
     except ValueError as e:

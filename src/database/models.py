@@ -191,7 +191,7 @@ class User(db.Entity):
                     **user_data,
                     'position': position,
                     'salary': salary,
-                    'status': status
+                    'status': DeliveryStatus.Available
                 }
                 user = DeliveryPerson(**delivery_person_data)
             else:

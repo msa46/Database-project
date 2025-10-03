@@ -5,6 +5,7 @@ Example script to demonstrate how to use the DataManager to create fake data usi
 
 import os
 import sys
+import random
 
 # Add src to the path so we can import our modules
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
@@ -57,7 +58,9 @@ def main():
             name = data_manager.faker.word()
             description = f"Delicious {name.lower()} pizza with fresh ingredients"
             pizza_ingredients = data_manager.faker.random_sample(all_ingredients, length=data_manager.faker.random_int(min=2, max=min(5, len(all_ingredients))))
-            pizza = data_manager.pizza.create(name=name, description=description, ingredients=pizza_ingredients)
+            # Add random stock between 2 and 100 for each pizza
+            stock = random.randint(2, 100)
+            pizza = data_manager.pizza.create(name=name, description=description, ingredients=pizza_ingredients, stock=stock)
             more_pizzas.append(pizza)
         print("Created more pizzas!")
         

@@ -31,6 +31,7 @@ class PizzaInfo(BaseModel):
     id: int
     name: str
     description: Optional[str] = None
+    stock: int
 
 class CustomerInfo(BaseModel):
     id: int
@@ -224,7 +225,8 @@ async def get_dashboard(
                     PizzaInfo(
                         id=pizza.id,
                         name=pizza.name,
-                        description=pizza.description if hasattr(pizza, 'description') else None
+                        description=pizza.description if hasattr(pizza, 'description') else None,
+                        stock=pizza.stock
                     ) for pizza in pizzas
                 ]
                 

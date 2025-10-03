@@ -75,10 +75,13 @@ class UserManager(BaseManager):
     """Handles user creation."""
 
     @staticmethod
-    def create(username: str, email: str, password: str, birthdate: Optional[date] = None,
-              address: Optional[str] = None, postalCode: Optional[str] = None,
-              phone: Optional[str] = None, Gender: Optional[str] = None) -> User:
-        # Create user without password first
+    def create(username: str, email: str, password: str, address: str,
+               postalCode: str, phone: str, Gender: str,
+               birthdate: Optional[date] = None) -> User:
+        # Hash the password securely during creation
+        hashed_password, salt = User.hash_password(password)
+
+        # Create user with all required fields
         user = BaseManager.create_entity(
             User,
             username=username,
@@ -88,12 +91,9 @@ class UserManager(BaseManager):
             postalCode=postalCode,
             phone=phone,
             Gender=Gender,
-            password_hash="",  # Temporary value, will be set properly
-            salt=""  # Temporary value, will be set properly
+            password_hash=hashed_password,
+            salt=salt
         )
-
-        # Set the password using the secure hashing method
-        user.set_password(password)
 
         return user
     
@@ -193,29 +193,30 @@ class EmployeeManager(UserManager):
     """Handles employee creation."""
 
     @staticmethod
-    def create(username: str, email: str, password: str, position: str, salary: float, **kwargs) -> Employee:
-        # Generate a temporary password hash and salt
-        temp_password = "temp_password_" + username
-        temp_hash, temp_salt = User.hash_password(temp_password)
-        
-        # Create employee with temporary password hash
-        user_data = {
+    def create(username: str, email: str, password: str, position: str, salary: float,
+               address: str, postalCode: str, phone: str, Gender: str,
+               birthdate: Optional[date] = None, **kwargs) -> Employee:
+        # Hash the password securely during creation
+        hashed_password, salt = User.hash_password(password)
+
+        # Create employee with all required user fields and employee-specific fields
+        employee_data = {
             'username': username,
             'email': email,
-            'password_hash': temp_hash,
-            'salt': temp_salt,
+            'password_hash': hashed_password,
+            'salt': salt,
+            'address': address,
+            'postalCode': postalCode,
+            'phone': phone,
+            'Gender': Gender,
+            'birthdate': birthdate,
+            'position': position,
+            'salary': salary,
             **kwargs
         }
-        employee_data = {
-            'position': position,
-            'salary': salary
-        }
-        
-        employee = BaseManager.create_entity(Employee, **user_data, **employee_data)
-        
-        # Set the password using the secure hashing method
-        employee.set_password(password)
-        
+
+        employee = BaseManager.create_entity(Employee, **employee_data)
+
         return employee
     
     @staticmethod
@@ -270,30 +271,31 @@ class DeliveryPersonManager(EmployeeManager):
 
     @staticmethod
     def create(username: str, email: str, password: str, position: str, salary: float,
-              status: DeliveryStatus = DeliveryStatus.Available, **kwargs) -> DeliveryPerson:
-        # Generate a temporary password hash and salt
-        temp_password = "temp_password_" + username
-        temp_hash, temp_salt = User.hash_password(temp_password)
-        
-        # Create delivery person with temporary password hash
-        employee_data = {
+               status: DeliveryStatus = DeliveryStatus.Available, address: str = "",
+               postalCode: str = "", phone: str = "", Gender: str = "",
+               birthdate: Optional[date] = None, **kwargs) -> DeliveryPerson:
+        # Hash the password securely during creation
+        hashed_password, salt = User.hash_password(password)
+
+        # Create delivery person with all required user fields and delivery person-specific fields
+        delivery_person_data = {
             'username': username,
             'email': email,
-            'password_hash': temp_hash,
-            'salt': temp_salt,
+            'password_hash': hashed_password,
+            'salt': salt,
+            'address': address,
+            'postalCode': postalCode,
+            'phone': phone,
+            'Gender': Gender,
+            'birthdate': birthdate,
             'position': position,
             'salary': salary,
+            'status': status,
             **kwargs
         }
-        delivery_person_data = {
-            'status': status
-        }
-        
-        delivery_person = BaseManager.create_entity(DeliveryPerson, **employee_data, **delivery_person_data)
-        
-        # Set the password using the secure hashing method
-        delivery_person.set_password(password)
-        
+
+        delivery_person = BaseManager.create_entity(DeliveryPerson, **delivery_person_data)
+
         return delivery_person
     
     @staticmethod
@@ -511,15 +513,15 @@ class DataManager:
             loyalty_points = random.randint(0, 500)
             birthday_order = random.choice([True, False])
 
-            customer = self.customer.create(
+            customer = self.customer.create_full_user(
                 username=username,
                 email=email,
                 password=password,
-                birthdate=birthdate,
                 address=address,
                 postalCode=postal_code,
                 phone=phone,
                 Gender=gender,
+                birthdate=birthdate,
                 loyalty_points=loyalty_points,
                 birthday_order=birthday_order
             )
@@ -546,15 +548,17 @@ class DataManager:
             phone = self.faker.phone_number()
             gender = random.choice(['Male', 'Female', 'Other'])
 
-            delivery_person = self.delivery_person.create(
+            delivery_person = self.delivery_person.create_full_user(
                 username=username,
                 email=email,
                 password=password,
+                address=self.faker.street_address(),
+                postalCode=self.faker.postcode(),
+                phone=phone,
+                Gender=gender,
                 position=position,
                 salary=salary,
-                status=status,
-                phone=phone,
-                Gender=gender
+                status=status
             )
             delivery_persons.append(delivery_person)
 

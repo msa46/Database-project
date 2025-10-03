@@ -80,15 +80,15 @@ def main():
             loyalty_points = data_manager.faker.random_int(min=0, max=500)
             birthday_order = data_manager.faker.boolean()
             
-            customer = data_manager.customer.create(
+            customer = data_manager.customer.create_full_user(
                 username=username,
                 email=email,
                 password=password,
-                birthdate=birthdate,
                 address=address,
                 postalCode=postal_code,
                 phone=phone,
                 Gender=gender,
+                birthdate=birthdate,
                 loyalty_points=loyalty_points,
                 birthday_order=birthday_order
             )
@@ -112,15 +112,17 @@ def main():
             phone = data_manager.faker.phone_number()
             gender = data_manager.faker.random_element(['Male', 'Female', 'Other'])
             
-            delivery_person = data_manager.delivery_person.create(
+            delivery_person = data_manager.delivery_person.create_full_user(
                 username=username,
                 email=email,
                 password=password,
+                address=data_manager.faker.street_address(),
+                postalCode=data_manager.faker.postcode(),
+                phone=phone,
+                Gender=gender,
                 position=position,
                 salary=salary,
-                status=status,
-                phone=phone,
-                Gender=gender
+                status=status
             )
             more_delivery_persons.append(delivery_person)
         print("Created more delivery persons!")

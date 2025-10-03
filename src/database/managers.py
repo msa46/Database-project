@@ -61,11 +61,11 @@ class ExtraManager(BaseManager):
 
 class PizzaManager(BaseManager):
     """Handles pizza creation."""
-    
+
     @staticmethod
-    def create(name: str, description: Optional[str] = None, ingredients: Optional[List[Ingredient]] = None) -> Pizza:
-        return BaseManager.create_entity(Pizza, name=name, description=description, ingredients=ingredients or [])
-    
+    def create(name: str, description: Optional[str] = None, ingredients: Optional[List[Ingredient]] = None, stock: int = 1) -> Pizza:
+        return BaseManager.create_entity(Pizza, name=name, description=description, ingredients=ingredients or [], stock=stock)
+
     @staticmethod
     def create_batch(pizzas_data: List[Dict[str, Any]]) -> List[Pizza]:
         return BaseManager.create_entities_batch(Pizza, pizzas_data)
@@ -474,20 +474,23 @@ class DataManager:
     def create_fake_pizzas(self, count=3, ingredients=None):
         if ingredients is None:
             ingredients = self.create_fake_ingredients(10)
-        
+
         pizza_names = ['Margherita', 'Pepperoni', 'Hawaiian', 'Vegan Special', 'Veggie Delight',
-                      'BBQ Chicken', 'Meat Lovers', 'Four Cheese', 'Seafood', 'Spicy Pepperoni']
-        
+                       'BBQ Chicken', 'Meat Lovers', 'Four Cheese', 'Seafood', 'Spicy Pepperoni']
+
         pizzas = []
         for _ in range(count):
             name = random.choice(pizza_names)
             description = f"Delicious {name.lower()} pizza with fresh ingredients"
-            
+
             pizza_ingredients = random.sample(ingredients, random.randint(2, min(5, len(ingredients))))
-            
-            pizza = self.pizza.create(name=name, description=description, ingredients=pizza_ingredients)
+
+            # Add random stock between 10 and 100 for each pizza
+            stock = random.randint(10, 100)
+
+            pizza = self.pizza.create(name=name, description=description, ingredients=pizza_ingredients, stock=stock)
             pizzas.append(pizza)
-        
+
         return pizzas
     
     @db_session

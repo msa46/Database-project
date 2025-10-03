@@ -44,6 +44,7 @@ class Pizza(db.Entity):
     ingredients = Set("Ingredient")
     order = Set(OrderPizzaRelation)
     description = PonyOptional(str)
+    stock = Required(int, default=1)
 
 
 class Extra(db.Entity):

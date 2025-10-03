@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Cookie, Response
+from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.security import OAuth2PasswordBearer
 from pydantic import BaseModel
 from typing import Optional, Union, List
@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 # Router
 router = APIRouter(prefix="/v1", tags=["secured endpoints"])
+
+# OAuth2PasswordBearer scheme for token extraction from Authorization header
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 # Pydantic models for request/response
 class SecuredInfoResponse(BaseModel):
@@ -58,18 +61,18 @@ class DeliveryPersonSpecificResponse(EmployeeSpecificResponse):
     status: str
     orders: List[OrderInfo] = []
 
-# Cookie-based authentication dependency
-async def get_current_user_from_cookie(access_token: Optional[str] = Cookie(None, alias="access_token")):
-    """Get current authenticated user from cookie"""
-    if not access_token:
+# Token-based authentication dependency
+async def get_current_user_from_token(token: str = Depends(oauth2_scheme)):
+    """Get current authenticated user from Authorization header token"""
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated. Missing access token cookie.",
+            detail="Not authenticated. Missing access token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
     try:
-        payload = verify_token(access_token)
+        payload = verify_token(token)
         username: str = payload.get("sub")
         user_id: int = payload.get("user_id")
         
@@ -95,7 +98,7 @@ async def get_current_user_from_cookie(access_token: Optional[str] = Cookie(None
         )
 
 # Authorization dependencies for different user types
-async def get_current_customer(current_user: dict = Depends(get_current_user_from_cookie)):
+async def get_current_customer(current_user: dict = Depends(get_current_user_from_token)):
     """Ensure current user is a customer"""
     with db_session:
         user = Customer.select(u for u in Customer if u.username == current_user["username"]).first()
@@ -106,7 +109,7 @@ async def get_current_customer(current_user: dict = Depends(get_current_user_fro
             )
         return user
 
-async def get_current_employee(current_user: dict = Depends(get_current_user_from_cookie)):
+async def get_current_employee(current_user: dict = Depends(get_current_user_from_token)):
     """Ensure current user is an employee"""
     with db_session:
         user = Employee.select(u for u in Employee if u.username == current_user["username"]).first()
@@ -117,7 +120,7 @@ async def get_current_employee(current_user: dict = Depends(get_current_user_fro
             )
         return user
 
-async def get_current_delivery_person(current_user: dict = Depends(get_current_user_from_cookie)):
+async def get_current_delivery_person(current_user: dict = Depends(get_current_user_from_token)):
     """Ensure current user is a delivery person"""
     with db_session:
         user = DeliveryPerson.select(u for u in DeliveryPerson if u.username == current_user["username"]).first()
@@ -130,8 +133,7 @@ async def get_current_delivery_person(current_user: dict = Depends(get_current_u
 
 @router.get("/info", response_model=Union[CustomerSpecificResponse, EmployeeSpecificResponse, DeliveryPersonSpecificResponse])
 async def get_secured_info(
-    response: Response,
-    current_user: dict = Depends(get_current_user_from_cookie)
+    current_user: dict = Depends(get_current_user_from_token)
 ):
     """Get secured information based on user type"""
     try:
@@ -143,16 +145,6 @@ async def get_secured_info(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="User not found"
                 )
-            
-            # Set a secure cookie
-            response.set_cookie(
-                key="secured_access",
-                value="granted",
-                httponly=True,
-                secure=True,  # Set to False for development without HTTPS
-                samesite="strict",
-                max_age=2 * 24 * 60 * 60  # 2 days
-            )
             
             # Check user type and return appropriate response
             if isinstance(user, Customer):
@@ -204,7 +196,7 @@ async def get_secured_info(
 
 @router.get("/dashboard", response_model=Union[CustomerSpecificResponse, EmployeeSpecificResponse, DeliveryPersonSpecificResponse])
 async def get_dashboard(
-    current_user: dict = Depends(get_current_user_from_cookie)
+    current_user: dict = Depends(get_current_user_from_token)
 ):
     """Get user dashboard based on user type"""
     try:

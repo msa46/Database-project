@@ -20,10 +20,12 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
-    allow_credentials=True,
+    allow_origins=["http://localhost:3000"],  # Allow all origins
+    allow_credentials=False,
     allow_methods=["*"],  # Allow all methods
     allow_headers=["*"],  # Allow all headers
+    expose_headers=["*"],  # Expose all headers
+    max_age=600,  # Cache preflight requests for 10 minutes
 )
 
 # Initialize database

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Response
+from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, field_validator, ValidationInfo
 from typing import Optional
@@ -134,7 +134,7 @@ def verify_token(token: str):
 
 @router.post("/signup", response_model=TokenResponse)
 @db_session
-def signup(user_data: UserSignupRequest, response: Response):
+def signup(user_data: UserSignupRequest):
     """Register a new user account"""
     try:
         logger.debug(f"Signup attempt for username: {user_data.username}, email: {user_data.email}")
@@ -198,17 +198,6 @@ def signup(user_data: UserSignupRequest, response: Response):
             expires_delta=access_token_expires
         )
 
-        # Set the access token as an HTTP-only cookie
-        response.set_cookie(
-            key="access_token",
-            value=access_token,
-            httponly=True,
-            secure=True,  # Set to False for development without HTTPS
-            samesite="strict",
-            max_age=int(access_token_expires.total_seconds()),
-            expires=expire_time
-        )
-
         return TokenResponse(
             access_token=access_token,
             token_type="bearer",
@@ -237,7 +226,7 @@ def signup(user_data: UserSignupRequest, response: Response):
 
 @router.post("/login", response_model=TokenResponse)
 @db_session
-def login(credentials: UserLoginRequest, response: Response):
+def login(credentials: UserLoginRequest):
     """Authenticate user and return access token"""
     try:
         # Find user by username or email
@@ -263,17 +252,6 @@ def login(credentials: UserLoginRequest, response: Response):
         access_token, expire_time = create_access_token(
             data={"sub": user.username, "user_id": user.id},
             expires_delta=access_token_expires
-        )
-
-        # Set the access token as an HTTP-only cookie
-        response.set_cookie(
-            key="access_token",
-            value=access_token,
-            httponly=True,
-            secure=True,  # Set to False for development without HTTPS
-            samesite="strict",
-            max_age=int(access_token_expires.total_seconds()),  # 30 minutes
-            expires=expire_time
         )
 
         return TokenResponse(
@@ -340,7 +318,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 
 @router.post("/refresh", response_model=TokenResponse)
 @db_session
-def refresh_token(token: str = Depends(oauth2_scheme), response: Response = None):
+def refresh_token(token: str = Depends(oauth2_scheme)):
     """Refresh access token"""
     try:
         payload = verify_token(token)
@@ -351,18 +329,6 @@ def refresh_token(token: str = Depends(oauth2_scheme), response: Response = None
             data={"sub": payload.get("sub"), "user_id": payload.get("user_id")},
             expires_delta=access_token_expires
         )
-
-        # Set the new access token as an HTTP-only cookie
-        if response:
-            response.set_cookie(
-                key="access_token",
-                value=new_access_token,
-                httponly=True,
-                secure=True,  # Set to False for development without HTTPS
-                samesite="strict",
-                max_age=int(access_token_expires.total_seconds()),  # 30 minutes
-                expires=expire_time
-            )
 
         return TokenResponse(
             access_token=new_access_token,

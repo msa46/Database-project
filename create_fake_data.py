@@ -5,7 +5,6 @@ Example script to demonstrate how to use the DataManager to create fake data usi
 
 import os
 import sys
-import random
 
 # Add src to the path so we can import our modules
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
@@ -55,11 +54,11 @@ def main():
         all_ingredients = fake_data['ingredients'] + more_ingredients
         more_pizzas = []
         for _ in range(2):
-            name = data_manager.faker.word()
-            description = f"Delicious {name.lower()} pizza with fresh ingredients"
+            name = data_manager.faker.word().title()
+            description = f"{data_manager.faker.sentence(nb_words=6)} Perfect with {data_manager.faker.random_element(['extra cheese', 'fresh herbs', 'spicy sauce', 'crispy crust', 'premium toppings'])}."
             pizza_ingredients = data_manager.faker.random_sample(all_ingredients, length=data_manager.faker.random_int(min=2, max=min(5, len(all_ingredients))))
             # Add random stock between 2 and 100 for each pizza
-            stock = random.randint(2, 100)
+            stock = data_manager.faker.random_int(min=2, max=100)
             pizza = data_manager.pizza.create(name=name, description=description, ingredients=pizza_ingredients, stock=stock)
             more_pizzas.append(pizza)
         print("Created more pizzas!")
@@ -76,19 +75,19 @@ def main():
             address = data_manager.faker.street_address()
             postal_code = data_manager.faker.postcode()
             phone = data_manager.faker.phone_number()
-            gender = data_manager.faker.random_element(['Male', 'Female', 'Other'])
+            gender = data_manager.faker.random_element([data_manager.faker.random_element(['M', 'F']), 'Other']) if data_manager.faker.boolean() else 'Other'
             loyalty_points = data_manager.faker.random_int(min=0, max=500)
             birthday_order = data_manager.faker.boolean()
             
-            customer = data_manager.customer.create(
+            customer = data_manager.customer.create_full_user(
                 username=username,
                 email=email,
                 password=password,
-                birthdate=birthdate,
                 address=address,
                 postalCode=postal_code,
                 phone=phone,
                 Gender=gender,
+                birthdate=birthdate,
                 loyalty_points=loyalty_points,
                 birthday_order=birthday_order
             )
@@ -97,7 +96,7 @@ def main():
         
         # Create more delivery persons
         more_delivery_persons = []
-        positions = ['Delivery Driver', 'Senior Delivery Driver', 'Delivery Manager']
+        positions = [data_manager.faker.job() for _ in range(3)]
         statuses = list(data_manager.delivery_person.status.py_type)
         
         for _ in range(1):
@@ -110,17 +109,19 @@ def main():
             salary = round(data_manager.faker.random.uniform(1800.0, 2500.0), 2)
             status = data_manager.faker.random_element(statuses)
             phone = data_manager.faker.phone_number()
-            gender = data_manager.faker.random_element(['Male', 'Female', 'Other'])
+            gender = data_manager.faker.random_element([data_manager.faker.random_element(['M', 'F']), 'Other']) if data_manager.faker.boolean() else 'Other'
             
-            delivery_person = data_manager.delivery_person.create(
+            delivery_person = data_manager.delivery_person.create_full_user(
                 username=username,
                 email=email,
                 password=password,
+                address=data_manager.faker.street_address(),
+                postalCode=data_manager.faker.postcode(),
+                phone=phone,
+                Gender=gender,
                 position=position,
                 salary=salary,
-                status=status,
-                phone=phone,
-                Gender=gender
+                status=status
             )
             more_delivery_persons.append(delivery_person)
         print("Created more delivery persons!")
@@ -171,11 +172,11 @@ def main():
         
         # Create more discount codes
         more_discount_codes = []
-        code_prefixes = ['WELCOME', 'SUMMER', 'WINTER', 'SPRING', 'FALL', 'LOYALTY', 'SPECIAL', 'HOLIDAY']
+        code_prefixes = [data_manager.faker.word().upper() for _ in range(5)]
         
         for _ in range(2):
             prefix = data_manager.faker.random_element(code_prefixes)
-            suffix = data_manager.faker.random_int(min=10, max=50)
+            suffix = data_manager.faker.random_int(min=10, max=99)
             code = f"{prefix}{suffix}"
             
             percentage = round(data_manager.faker.random.uniform(5.0, 30.0), 1)

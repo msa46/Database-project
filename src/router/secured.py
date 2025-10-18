@@ -101,7 +101,7 @@ async def get_current_user_from_token(token: str = Depends(oauth2_scheme)):
 async def get_current_customer(current_user: dict = Depends(get_current_user_from_token)):
     """Ensure current user is a customer"""
     with db_session:
-        user = Customer.select(u for u in Customer if u.username == current_user["username"]).first()
+        user = Customer.select(lambda u: u.username == current_user["username"]).first()
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -112,7 +112,7 @@ async def get_current_customer(current_user: dict = Depends(get_current_user_fro
 async def get_current_employee(current_user: dict = Depends(get_current_user_from_token)):
     """Ensure current user is an employee"""
     with db_session:
-        user = Employee.select(u for u in Employee if u.username == current_user["username"]).first()
+        user = Employee.select(lambda u: u.username == current_user["username"]).first()
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -123,7 +123,7 @@ async def get_current_employee(current_user: dict = Depends(get_current_user_fro
 async def get_current_delivery_person(current_user: dict = Depends(get_current_user_from_token)):
     """Ensure current user is a delivery person"""
     with db_session:
-        user = DeliveryPerson.select(u for u in DeliveryPerson if u.username == current_user["username"]).first()
+        user = DeliveryPerson.select(lambda u: u.username == current_user["username"]).first()
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -139,7 +139,7 @@ async def get_secured_info(
     try:
         with db_session:
             # Get the user from database
-            user = User.select(u for u in User if u.username == current_user["username"]).first()
+            user = User.select(lambda u: u.username == current_user["username"]).first()
             if not user:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -200,9 +200,12 @@ async def get_dashboard(
 ):
     """Get user dashboard based on user type"""
     try:
+        logger.debug(f"Getting dashboard for user: {current_user['username']}")
         with db_session:
             # Get the user from database
-            user = User.select(u for u in User if u.username == current_user["username"]).first()
+            # Fix: Use lambda function instead of generator expression for Pony ORM
+            user = User.select(lambda u: u.username == current_user["username"]).first()
+            logger.debug(f"Found user: {user}")
             if not user:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -213,13 +216,17 @@ async def get_dashboard(
             if isinstance(user, Customer):
                 # Get all available pizzas for customers
                 pizzas = QueryManager.get_all_pizzas()
+                logger.debug(f"Retrieved pizzas: {pizzas}")
+                # Convert QueryResultIterator to list before iteration
+                pizza_list = list(pizzas) if pizzas else []
+                logger.debug(f"Pizza list: {pizza_list}")
                 pizza_info_list = [
                     PizzaInfo(
                         id=pizza.id,
                         name=pizza.name,
                         description=pizza.description if hasattr(pizza, 'description') else None,
                         stock=pizza.stock
-                    ) for pizza in pizzas
+                    ) for pizza in pizza_list
                 ]
                 
                 return CustomerSpecificResponse(

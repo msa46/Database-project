@@ -20,13 +20,38 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Allow all origins
-    allow_credentials=False,
-    allow_methods=["*"],  # Allow all methods
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],  # Allow both localhost and 127.0.0.1
+    allow_credentials=True,  # Changed to True to support credentials if needed
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Explicitly list methods
     allow_headers=["*"],  # Allow all headers
     expose_headers=["*"],  # Expose all headers
     max_age=600,  # Cache preflight requests for 10 minutes
 )
+
+# Add middleware to log all requests for debugging
+@app.middleware("http")
+async def log_requests(request, call_next):
+    origin = request.headers.get("origin")
+    logger.debug(f"Incoming request: {request.method} {request.url}")
+    logger.debug(f"Origin: {origin}")
+    logger.debug(f"Headers: {dict(request.headers)}")
+    
+    response = await call_next(request)
+    
+    # Log CORS-related headers
+    cors_headers = {
+        "access-control-allow-origin": response.headers.get("access-control-allow-origin"),
+        "access-control-allow-methods": response.headers.get("access-control-allow-methods"),
+        "access-control-allow-headers": response.headers.get("access-control-allow-headers"),
+        "access-control-max-age": response.headers.get("access-control-max-age"),
+        "vary": response.headers.get("vary")
+    }
+    
+    logger.debug(f"Response status: {response.status_code}")
+    logger.debug(f"CORS headers: {cors_headers}")
+    logger.debug(f"All response headers: {dict(response.headers)}")
+    
+    return response
 
 # Initialize database
 logger.debug("Initializing database...")

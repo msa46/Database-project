@@ -139,9 +139,9 @@ def signup(user_data: UserSignupRequest):
     try:
         logger.debug(f"Signup attempt for username: {user_data.username}, email: {user_data.email}")
         
-        # Check if username already exists
+        # Check if username already exists using User.get() method
         logger.debug("Checking if username already exists")
-        existing_user = User.select(lambda u: u.username == user_data.username).first()
+        existing_user = User.get(username=user_data.username)
         if existing_user:
             logger.warning(f"Username already registered: {user_data.username}")
             raise HTTPException(
@@ -149,9 +149,9 @@ def signup(user_data: UserSignupRequest):
                 detail="Username already registered"
             )
 
-        # Check if email already exists
+        # Check if email already exists using User.get() method
         logger.debug("Checking if email already exists")
-        existing_email = User.select(lambda u: u.email == user_data.email).first()
+        existing_email = User.get(email=user_data.email)
         if existing_email:
             logger.warning(f"Email already registered: {user_data.email}")
             raise HTTPException(

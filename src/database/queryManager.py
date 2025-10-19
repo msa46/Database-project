@@ -63,6 +63,15 @@ class QueryManager:
 
     @staticmethod
     @db_session
+    def get_pizza_ingredients(pizza_id: int) -> List[Ingredient]:
+        """Get all ingredients for a specific pizza by pizza ID."""
+        pizza = Pizza.get(id=pizza_id)
+        if not pizza:
+            raise ValueError(f"Pizza with id {pizza_id} not found")
+        return list(pizza.ingredients)
+
+    @staticmethod
+    @db_session
     def calculate_pizza_price(pizza_id: int) -> float:
         """Calculate pizza price: ingredient cost + 40% margin + 9% VAT."""
         pizza = Pizza.get(id=pizza_id)
@@ -256,7 +265,6 @@ class QueryManager:
             return []
         return list(user.orders)
     
-#TODO: implement discount capability
     @staticmethod
     @db_session
     def create_order(
@@ -351,7 +359,93 @@ class QueryManager:
                     extra = extra_dict.get(extra_id)
                     order.extras.add(extra)
 
-            # TODO: Add discount code validation (check existence, validity period, usage)
+            # Calculate total order amount before applying discount
+            total = 0.0
+
+            # Calculate pizza costs
+            for item in pizza_quantities:
+                pizza_id, quantity = item
+                pizza = pizza_dict.get(pizza_id)
+                unit_price = QueryManager.calculate_pizza_price(pizza.id)
+                total += unit_price * quantity
+
+            # Calculate extra costs
+            if extra_ids:
+                for extra_id in extra_ids:
+                    extra = extra_dict.get(extra_id)
+                    total += extra.price
+
+            # Apply discount code if provided
+            discount_amount = 0.0
+            discount_info = None
+
+            if discount_code:
+                logger.debug(f"Processing discount code: {discount_code}")
+                # Get discount code details using existing query
+                dc_details = QueryManager.get_discount_code_details(discount_code)
+
+                if not dc_details or not dc_details.get('is_valid'):
+                    raise ValueError(f"Invalid or expired discount code: {discount_code}")
+
+                dc = DiscountCode.get(code=discount_code)
+                if not dc:
+                    raise ValueError(f"Discount code not found: {discount_code}")
+
+                # Apply discount based on type
+                if dc.percentage == 0.0:
+                    # Birthday code: 1 free cheapest pizza + 1 free drink
+                    logger.debug("Applying birthday discount (free cheapest pizza + 1 free drink)")
+
+                    # Find cheapest pizza in order
+                    cheapest_pizza = None
+                    cheapest_price = float('inf')
+
+                    for opr in order.Pizzas:
+                        pizza_price = QueryManager.calculate_pizza_price(opr.pizza.id)
+                        if pizza_price < cheapest_price:
+                            cheapest_price = pizza_price
+                            cheapest_pizza = opr
+
+                    # Find free drink (cheapest available drink extra)
+                    free_drink = None
+                    drink_price = float('inf')
+
+                    for extra in order.extras:
+                        if extra.type == ExtraType.Drink and extra.price < drink_price:
+                            drink_price = extra.price
+                            free_drink = extra
+
+                    # Apply discounts
+                    if cheapest_pizza:
+                        discount_amount += cheapest_price
+                        logger.debug(f"Applied free pizza discount: {cheapest_price}")
+
+                    if free_drink:
+                        discount_amount += free_drink.price
+                        logger.debug(f"Applied free drink discount: {free_drink.price}")
+
+                    discount_info = {
+                        'code': dc.code,
+                        'type': 'birthday',
+                        'description': '1 free pizza (cheapest) and 1 free drink',
+                        'amount': round(discount_amount, 2)
+                    }
+
+                else:
+                    # Percentage-based discount
+                    logger.debug(f"Applying percentage discount: {dc.percentage}%")
+                    discount_amount = total * (dc.percentage / 100)
+                    discount_info = {
+                        'code': dc.code,
+                        'type': 'loyalty',
+                        'percentage': dc.percentage,
+                        'amount': round(discount_amount, 2)
+                    }
+
+                # Mark discount code as used if it's a one-time use
+                if dc.percentage == 0.0:  # Birthday codes are one-time use
+                    dc.used = True
+                    dc.used_by = user
 
             # Commit the transaction
             logger.debug("Committing order creation transaction")
@@ -460,7 +554,6 @@ class QueryManager:
             # Transaction will be automatically rolled back if commit() wasn't called
             raise
     
-#TODO: implement/adjust discount capability
     @staticmethod
     @db_session
     def get_order_confirmation(order_id: int) -> Optional[Dict[str, Any]]:
@@ -496,18 +589,49 @@ class QueryManager:
                 'subtotal': round(extra.price, 2)
             })
             
-#TODO: Check discount logic and possibly move this to a subquery in the loyalty section
         # Apply discount if applicable
         discount_info = None
         if order.user.discount_code:
             dc = order.user.discount_code
-            discount_amount = total * (dc.percentage / 100)
-            total -= discount_amount
-            discount_info = {
-                'code': dc.code,
-                'percentage': dc.percentage,
-                'amount': round(discount_amount, 2)
-            }
+
+            if dc.percentage == 0.0:
+                # Birthday code: 1 free cheapest pizza + 1 free drink
+                discount_amount = 0.0
+
+                # Find cheapest pizza in order
+                cheapest_pizza_price = float('inf')
+                for opr in order.Pizzas:
+                    pizza_price = QueryManager.calculate_pizza_price(opr.pizza.id)
+                    cheapest_pizza_price = min(cheapest_pizza_price, pizza_price)
+
+                # Find cheapest drink in order
+                cheapest_drink_price = float('inf')
+                for extra in order.extras:
+                    if extra.type == ExtraType.Drink:
+                        cheapest_drink_price = min(cheapest_drink_price, extra.price)
+
+                # Apply discounts
+                if cheapest_pizza_price != float('inf'):
+                    discount_amount += cheapest_pizza_price
+                if cheapest_drink_price != float('inf'):
+                    discount_amount += cheapest_drink_price
+
+                discount_info = {
+                    'code': dc.code,
+                    'type': 'birthday',
+                    'description': '1 free pizza (cheapest) and 1 free drink',
+                    'amount': round(discount_amount, 2)
+                }
+
+            else:
+                # Percentage-based discount
+                discount_amount = total * (dc.percentage / 100)
+                discount_info = {
+                    'code': dc.code,
+                    'type': 'loyalty',
+                    'percentage': dc.percentage,
+                    'amount': round(discount_amount, 2)
+                }
 
         return {
             'total_price': round(total, 2),
@@ -780,13 +904,13 @@ class QueryManager:
                             if isinstance(o.user, Employee)
                             and o.status in [OrderStatus.Pending, OrderStatus.In_Progress])[:]
     
-    #TODO: Check if this works as intended
     @staticmethod
     @db_session
     def get_top_3_pizzas_past_month() -> List[Dict[str, Any]]:
         """Get the top 3 pizzas sold in the past month by quantity."""
         past_month = datetime.now() - timedelta(days=30)
-        top_pizzas = select((p, sum(opr.quantity)) for p in Pizza for opr in p.order for o in Order
-                            if opr.order == o and o.created_at >= past_month) \
-                            .order_by(-2)[:3]
+        top_pizzas = select((p, sum(opr.quantity)) for p in Pizza
+                           for opr in p.order
+                           if opr.order.created_at >= past_month) \
+                           .order_by(-2)[:3]
         return [{'pizza': p, 'total_quantity': qty} for p, qty in top_pizzas]

@@ -42,7 +42,7 @@ class Pizza(db.Entity):
     id = PrimaryKey(int, auto=True)
     name = Required(str)
     ingredients = Set("Ingredient")
-    order = Set(OrderPizzaRelation)
+    order_relations = Set(OrderPizzaRelation)
     description = PonyOptional(str)
     stock = Required(int, default=1)
 
@@ -103,12 +103,17 @@ class User(db.Entity):
 
     @staticmethod
     def verify_password(password: str, hashed_password: str, salt: str) -> bool:
-
+        import logging
+        logger = logging.getLogger(__name__)
+        
         try:
+            logger.debug("Starting password verification")
             salt_bytes = base64.b64decode(salt)
+            logger.debug(f"Salt decoded successfully, length: {len(salt_bytes)}")
 
             pepper = User._get_pepper()
             password_with_pepper = password + pepper
+            logger.debug(f"Pepper applied: {pepper[:5]}...")
 
             kdf = PBKDF2HMAC(
                 algorithm=hashes.SHA256(),
@@ -119,10 +124,14 @@ class User(db.Entity):
             )
             key = kdf.derive(password_with_pepper.encode('utf-8'))
             derived_hash = base64.b64encode(key).decode('utf-8')
+            logger.debug(f"Derived hash generated, comparing with stored hash")
 
-            return secrets.compare_digest(derived_hash, hashed_password)
+            result = secrets.compare_digest(derived_hash, hashed_password)
+            logger.debug(f"Password verification result: {result}")
+            return result
 
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error in verify_password: {str(e)}")
             return False
 
     def set_password(self, password: str):
@@ -131,7 +140,16 @@ class User(db.Entity):
         self.salt = salt
 
     def check_password(self, password: str) -> bool:
-        return User.verify_password(password, self.password_hash, self.salt)
+        try:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Checking password for user {self.username}")
+            result = User.verify_password(password, self.password_hash, self.salt)
+            logger.debug(f"Password check result: {result}")
+            return result
+        except Exception as e:
+            logger.error(f"Error in check_password: {str(e)}")
+            raise
     
     def validate_phone(self):
         if self.phone:
@@ -152,6 +170,14 @@ class User(db.Entity):
                         birthday_order: bool = False, status: DeliveryStatus = DeliveryStatus.Available):
         """Create a complete user of any type with all required fields in one operation."""
         try:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Creating {user_type} user: {username}")
+            
+            # Validate required fields
+            if not username or not email or not password or not address or not postalCode or not phone or not Gender:
+                raise ValueError("All required fields must be provided")
+            
             # Hash the password securely during creation
             hashed_password, salt = User.hash_password(password)
             
@@ -167,6 +193,7 @@ class User(db.Entity):
                 'Gender': Gender,
                 'birthdate': birthdate
             }
+            logger.debug(f"Base user data created: {user_data}")
             
             # Create user based on type
             if user_type == "customer":
@@ -200,9 +227,13 @@ class User(db.Entity):
             
             # Commit the transaction to ensure the user ID is populated
             commit()
+            logger.debug(f"User created successfully with ID: {user.id}")
             
             return user
         except Exception as e:
+            logger.error(f"Error creating user: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             raise e
 
 
@@ -210,18 +241,19 @@ class User(db.Entity):
 class Customer(User):
     loyalty_points = Required(int, default=0)
     birthday_order = Required(bool, default=False)
+
 class Employee(User):
-    position = Required(str)  
+    position = Required(str)
     salary = Required(float)
 
 class DeliveryPerson(Employee):
-    status = Required(py_type=DeliveryStatus, sql_type='VARCHAR') 
+    status = Required(py_type=DeliveryStatus, sql_type='VARCHAR')
     delivered_orders = Set("Order")
 
 class Order(db.Entity):
     id = PrimaryKey(int, auto=True)
     user = Required(User)
-    Pizzas = Set("OrderPizzaRelation")
+    pizza_relations = Set("OrderPizzaRelation")
     extras = Set(Extra)
     status = Required(py_type=OrderStatus, sql_type='VARCHAR')
     created_at = Required(datetime, default=datetime.now)

@@ -19,19 +19,19 @@ class QueryManager:
     @db_session
     def get_extras_by_type(extra_type: ExtraType) -> List[Extra]:
         """Example: Get extras by type."""
-        return Extra.select(e for e in Extra if e.type == extra_type)[:]
+        return Extra.select(lambda e: e.type == extra_type)[:]
 
     @staticmethod
     @db_session
     def get_all_drinks() -> List[Extra]:
         """Example: Get all drink extras."""
-        return Extra.select(e for e in Extra if e.type == ExtraType.Drink)[:]
+        return Extra.select(lambda e: e.type == ExtraType.Drink)[:]
 
     @staticmethod
     @db_session
     def get_all_desserts() -> List[Extra]:
         """Example: Get all dessert extras."""
-        return Extra.select(e for e in Extra if e.type == ExtraType.Dessert)[:]
+        return Extra.select(lambda e: e.type == ExtraType.Dessert)[:]
 
     @staticmethod
     @db_session
@@ -47,15 +47,72 @@ class QueryManager:
     
     @staticmethod
     @db_session
+    def get_pizzas_paginated(page: int = 1, page_size: int = 10) -> Dict[str, Any]:
+        """Get pizzas with pagination.
+        
+        Args:
+            page: Page number (1-based)
+            page_size: Number of items per page
+            
+        Returns:
+            Dictionary with pizzas list, pagination info, and total count
+        """
+        try:
+            # Calculate offset
+            offset = (page - 1) * page_size
+            
+            # Get total count
+            total_count = Pizza.select().count()
+            
+            # Get pizzas for the current page
+            pizzas = Pizza.select()[offset:offset + page_size]
+            
+            # Calculate pagination info
+            total_pages = (total_count + page_size - 1) // page_size  # Ceiling division
+            has_next = page < total_pages
+            has_prev = page > 1
+            
+            return {
+                "pizzas": pizzas,
+                "pagination": {
+                    "page": page,
+                    "page_size": page_size,
+                    "total_count": total_count,
+                    "total_pages": total_pages,
+                    "has_next": has_next,
+                    "has_prev": has_prev
+                }
+            }
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in get_pizzas_paginated: {str(e)}")
+            logger.error(f"Page: {page}, Page size: {page_size}")
+            raise
+    
+    @staticmethod
+    @db_session
     def get_vegan_pizzas() -> List[Pizza]:
         """Get all pizzas that are vegan (all ingredients are vegan)."""
-        return Pizza.select(p for p in Pizza if all(i.type == IngredientType.Vegan for i in p.ingredients))[:]
+        # This is a complex query that needs to be done in two steps due to Pony ORM limitations
+        all_pizzas = Pizza.select(lambda p: p.ingredients)[:]
+        vegan_pizzas = []
+        for pizza in all_pizzas:
+            if pizza.ingredients and all(i.type == IngredientType.Vegan for i in pizza.ingredients):
+                vegan_pizzas.append(pizza)
+        return vegan_pizzas
     
     @staticmethod
     @db_session
     def get_vegetarian_pizzas() -> List[Pizza]:
         """Get all pizzas that are vegetarian (all ingredients are vegan or vegetarian)."""
-        return Pizza.select(p for p in Pizza if all(i.type in [IngredientType.Vegan, IngredientType.Vegetarian] for i in p.ingredients))[:]
+        # This is a complex query that needs to be done in two steps due to Pony ORM limitations
+        all_pizzas = Pizza.select(lambda p: p.ingredients)[:]
+        vegetarian_pizzas = []
+        for pizza in all_pizzas:
+            if pizza.ingredients and all(i.type in [IngredientType.Vegan, IngredientType.Vegetarian] for i in pizza.ingredients):
+                vegetarian_pizzas.append(pizza)
+        return vegetarian_pizzas
 
     @staticmethod
     @db_session
@@ -64,6 +121,9 @@ class QueryManager:
         pizza = Pizza.get(id=pizza_id)
         if not pizza:
             raise ValueError(f"Pizza with id {pizza_id} not found")
+        # Handle case where pizza might have no ingredients
+        if not pizza.ingredients:
+            return 0.0
         ingredient_cost = sum(ing.price for ing in pizza.ingredients)
         with_margin = ingredient_cost * 1.40
         with_vat = with_margin * 1.09
@@ -73,7 +133,7 @@ class QueryManager:
     @db_session
     def count_extras_by_type(extra_type: ExtraType) -> int:
         """Example: Count extras by type."""
-        return Extra.select(e for e in Extra if e.type == extra_type).count()
+        return Extra.select(lambda e: e.type == extra_type).count()
 
 # -=-=-=-=-=- USER QUERIES -=-=-=-=-=- #
 
@@ -296,8 +356,8 @@ class QueryManager:
         extra_ids_set = set(extra_ids) if extra_ids else set()
 
         # Fetch all pizzas and extras in single queries
-        pizzas = Pizza.select(p for p in Pizza if p.id in pizza_ids) if pizza_ids else []
-        extras = Extra.select(e for e in Extra if e.id in extra_ids_set) if extra_ids_set else []
+        pizzas = Pizza.select(lambda p: p.id in pizza_ids) if pizza_ids else []
+        extras = Extra.select(lambda e: e.id in extra_ids_set) if extra_ids_set else []
 
         # Create dictionaries for O(1) lookups
         pizza_dict = {p.id: p for p in pizzas}
@@ -389,7 +449,7 @@ class QueryManager:
         total = 0.0
 
         # Calculate pizza costs
-        for opr in order.Pizzas:
+        for opr in order.pizza_relations:
             unit_price = QueryManager.calculate_pizza_price(opr.pizza.id)
             subtotal = unit_price * opr.quantity
             total += subtotal
@@ -469,9 +529,8 @@ class QueryManager:
         Finds customers with birthday today and creates discount codes
         for 1 free pizza and 1 free drink (percentage set to 0, special handling required)."""
         today = date.today()
-        birthday_customers = Customer.select(c for c in Customer
-                                             if c.birthdate and c.birthdate.month == today.month
-                                             and c.birthdate.day == today.day)
+        birthday_customers = Customer.select(lambda c: c.birthdate and c.birthdate.month == today.month
+                                             and c.birthdate.day == today.day)[:]
         discount_codes = []
         for customer in birthday_customers:
             now = datetime.now()
@@ -529,7 +588,7 @@ class QueryManager:
     @db_session
     def get_available_delivery_persons() -> List[DeliveryPerson]:
         """Get all delivery persons who are currently available for assignments."""
-        return DeliveryPerson.select(dp for dp in DeliveryPerson if dp.status == DeliveryStatus.Available)[:]
+        return DeliveryPerson.select(lambda dp: dp.status == DeliveryStatus.Available)[:]
         
     @staticmethod
     @db_session
@@ -599,7 +658,7 @@ class QueryManager:
     @db_session
     def get_average_salary_by_gender(gender: str) -> float:
         """Get average salary for employees filtered by gender."""
-        result = select(avg(e.salary) for e in Employee if e.Gender == gender).first()
+        result = select(lambda e: avg(e.salary) for e in Employee if e.Gender == gender).first()
         return result or 0.0
 
     @staticmethod
@@ -616,7 +675,7 @@ class QueryManager:
     @db_session
     def get_average_salary_by_postal_code(postal_code: str) -> float:
         """Get average salary for employees filtered by postal code."""
-        result = select(avg(e.salary) for e in Employee if e.postalCode == postal_code).first()
+        result = select(lambda e: avg(e.salary) for e in Employee if e.postalCode == postal_code).first()
         return result or 0.0
 
 
@@ -626,16 +685,14 @@ class QueryManager:
     @db_session
     def get_undelivered_customer_orders() -> List[Order]:
         """Get all undelivered orders placed by customers."""
-        return Order.select(o for o in Order
-                            if isinstance(o.user, Customer)
+        return Order.select(lambda o: isinstance(o.user, Customer)
                             and o.status in [OrderStatus.Pending, OrderStatus.In_Progress])[:]
 
     @staticmethod
     @db_session
     def get_undelivered_staff_orders() -> List[Order]:
         """Get all undelivered orders placed by staff (employees)."""
-        return Order.select(o for o in Order
-                            if isinstance(o.user, Employee)
+        return Order.select(lambda o: isinstance(o.user, Employee)
                             and o.status in [OrderStatus.Pending, OrderStatus.In_Progress])[:]
     
     #TODO: Check if this works as intended
@@ -644,7 +701,7 @@ class QueryManager:
     def get_top_3_pizzas_past_month() -> List[Dict[str, Any]]:
         """Get the top 3 pizzas sold in the past month by quantity."""
         past_month = datetime.now() - timedelta(days=30)
-        top_pizzas = select((p, sum(opr.quantity)) for p in Pizza for opr in p.order for o in Order
+        top_pizzas = select(lambda: (p, sum(opr.quantity)) for p in Pizza for opr in p.order_relations for o in Order
                             if opr.order == o and o.created_at >= past_month) \
                             .order_by(-2)[:3]
         return [{'pizza': p, 'total_quantity': qty} for p, qty in top_pizzas]

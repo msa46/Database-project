@@ -60,6 +60,8 @@ try:
     logger.debug("Database initialized successfully")
 except Exception as e:
     logger.error(f"Error initializing database: {str(e)}")
+    import traceback
+    logger.error(f"Database initialization traceback: {traceback.format_exc()}")
     raise
 
 # Include authentication router
@@ -73,7 +75,12 @@ app.include_router(secured_router)
 
 @app.get("/")
 def read_root():
-    return {"Hello": "World", "message": "Welcome to Pizza Delivery API"}
+    try:
+        logger.debug("Root endpoint accessed")
+        return {"Hello": "World", "message": "Welcome to Pizza Delivery API"}
+    except Exception as e:
+        logger.error(f"Error in root endpoint: {str(e)}")
+        raise
 
 
 @app.get("/items/{item_id}")

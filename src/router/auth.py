@@ -96,15 +96,23 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     """Create JWT access token"""
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
-    else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    try:
+        logger.debug(f"Creating access token for data: {data}")
+        to_encode = data.copy()
+        if expires_delta:
+            expire = datetime.now(timezone.utc) + expires_delta
+        else:
+            expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt, expire
+        to_encode.update({"exp": expire})
+        logger.debug(f"Token payload: {to_encode}")
+        logger.debug(f"SECRET_KEY length: {len(SECRET_KEY)}")
+        encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+        logger.debug("JWT token created successfully")
+        return encoded_jwt, expire
+    except Exception as e:
+        logger.error(f"Error creating access token: {str(e)}")
+        raise
 
 def verify_token(token: str):
     """Verify JWT token"""
@@ -229,8 +237,31 @@ def signup(user_data: UserSignupRequest):
 def login(credentials: UserLoginRequest):
     """Authenticate user and return access token"""
     try:
+        logger.debug(f"Login attempt for: {credentials.username_or_email}")
+        logger.debug(f"Database session active: {db_session}")
+        
         # Find user by username or email
-        user = select(u for u in User if u.username == credentials.username_or_email or u.email == credentials.username_or_email).first()
+        logger.debug("Querying database for user...")
+        try:
+            # Try username first
+            user = User.get(username=credentials.username_or_email)
+            if user:
+                logger.debug(f"User found by username: {user.username}")
+            else:
+                # Try email
+                user = User.get(email=credentials.username_or_email)
+                if user:
+                    logger.debug(f"User found by email: {user.email}")
+                else:
+                    logger.debug("User not found")
+        except Exception as e:
+            logger.error(f"Database query error: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database query failed"
+            )
+        logger.debug(f"User found: {user is not None}")
 
         if not user:
             raise HTTPException(
@@ -240,11 +271,38 @@ def login(credentials: UserLoginRequest):
             )
 
         # Verify password
-        if not user.check_password(credentials.password):
+        logger.debug("Verifying password...")
+        try:
+            logger.debug(f"User object type: {type(user)}")
+            logger.debug(f"User has check_password method: {hasattr(user, 'check_password')}")
+            logger.debug(f"User has password_hash: {hasattr(user, 'password_hash')}")
+            logger.debug(f"User has salt: {hasattr(user, 'salt')}")
+            
+            if hasattr(user, 'password_hash'):
+                logger.debug(f"Password hash present: {bool(user.password_hash)}")
+                logger.debug(f"Password hash type: {type(user.password_hash)}")
+            if hasattr(user, 'salt'):
+                logger.debug(f"Salt present: {bool(user.salt)}")
+                logger.debug(f"Salt type: {type(user.salt)}")
+            
+            password_valid = user.check_password(credentials.password)
+            logger.debug(f"Password verification result: {password_valid}")
+            if not password_valid:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Incorrect username/email or password",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+        except HTTPException:
+            # Re-raise HTTP exceptions (like 401 for wrong password)
+            raise
+        except Exception as e:
+            logger.error(f"Password verification error: {str(e)}")
+            logger.error(f"Error type: {type(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect username/email or password",
-                headers={"WWW-Authenticate": "Bearer"},
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Password verification failed"
             )
 
         # Create access token
@@ -271,9 +329,11 @@ def login(credentials: UserLoginRequest):
             detail=f"Validation error: {str(e)}"
         )
     except Exception as e:
+        logger.error(f"Login error: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Login failed"
+            detail=f"Login failed: {str(e)}"
         )
 
 @router.get("/me", response_model=UserResponse)
@@ -284,7 +344,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         payload = verify_token(token)
         username: str = payload.get("sub")
 
-        user = select(u for u in User if u.username == username).first()
+        user = User.get(username=username)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

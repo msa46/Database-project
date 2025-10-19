@@ -1,6 +1,6 @@
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional
-from pony.orm import db_session, select, desc, count, avg
+from pony.orm import db_session, select, desc, count, avg, commit
 import re
 import secrets
 import random
@@ -26,25 +26,29 @@ class QueryManager:
     @db_session
     def get_all_drinks() -> List[Extra]:
         """Example: Get all drink extras."""
-        return Extra.select(lambda e: e.type == ExtraType.Drink)[:]
+        # Fetch all extras and filter in Python due to Pony ORM limitations
+        all_extras = list(Extra.select())
+        return [e for e in all_extras if e.type == ExtraType.Drink]
 
     @staticmethod
     @db_session
     def get_all_desserts() -> List[Extra]:
         """Example: Get all dessert extras."""
-        return Extra.select(lambda e: e.type == ExtraType.Dessert)[:]
+        # Fetch all extras and filter in Python due to Pony ORM limitations
+        all_extras = list(Extra.select())
+        return [e for e in all_extras if e.type == ExtraType.Dessert]
 
     @staticmethod
     @db_session
     def get_all_ingredients() -> List[Ingredient]:
         """Get all ingredients."""
-        return Ingredient.select()[:]
+        return list(Ingredient.select()[:])
 
     @staticmethod
     @db_session
     def get_all_pizzas() -> List[Pizza]:
         """Get all pizzas."""
-        return Pizza.select()[:]
+        return list(Pizza.select()[:])
     
     @staticmethod
     @db_session
@@ -66,7 +70,7 @@ class QueryManager:
             total_count = Pizza.select().count()
             
             # Get pizzas for the current page
-            pizzas = Pizza.select()[offset:offset + page_size]
+            pizzas = Pizza.select()[offset:offset + page_size][:]
             
             # Calculate pagination info
             total_pages = (total_count + page_size - 1) // page_size  # Ceiling division
@@ -74,7 +78,7 @@ class QueryManager:
             has_prev = page > 1
             
             return {
-                "pizzas": pizzas,
+                "pizzas": pizzas[:],
                 "pagination": {
                     "page": page,
                     "page_size": page_size,
@@ -99,7 +103,7 @@ class QueryManager:
         all_pizzas = Pizza.select(lambda p: p.ingredients)[:]
         vegan_pizzas = []
         for pizza in all_pizzas:
-            if pizza.ingredients and all(i.type == IngredientType.Vegan for i in pizza.ingredients):
+            if pizza.ingredients and all(i.type == IngredientType.Vegan for i in list(pizza.ingredients)):
                 vegan_pizzas.append(pizza)
         return vegan_pizzas
     
@@ -111,7 +115,7 @@ class QueryManager:
         all_pizzas = Pizza.select(lambda p: p.ingredients)[:]
         vegetarian_pizzas = []
         for pizza in all_pizzas:
-            if pizza.ingredients and all(i.type in [IngredientType.Vegan, IngredientType.Vegetarian] for i in pizza.ingredients):
+            if pizza.ingredients and all(i.type in [IngredientType.Vegan, IngredientType.Vegetarian] for i in list(pizza.ingredients)):
                 vegetarian_pizzas.append(pizza)
         return vegetarian_pizzas
 
@@ -125,7 +129,7 @@ class QueryManager:
         # Handle case where pizza might have no ingredients
         if not pizza.ingredients:
             return 0.0
-        ingredient_cost = sum(ing.price for ing in pizza.ingredients)
+        ingredient_cost = sum(ing.price for ing in list(pizza.ingredients))
         with_margin = ingredient_cost * 1.40
         with_vat = with_margin * 1.09
         return round(with_vat, 2)
@@ -134,7 +138,9 @@ class QueryManager:
     @db_session
     def count_extras_by_type(extra_type: ExtraType) -> int:
         """Example: Count extras by type."""
-        return Extra.select(lambda e: e.type == extra_type).count()
+        # Fetch all extras and filter in Python due to Pony ORM limitations
+        all_extras = list(Extra.select())
+        return sum(1 for e in all_extras if e.type == extra_type)
 
 # -=-=-=-=-=- USER QUERIES -=-=-=-=-=- #
 
@@ -159,10 +165,15 @@ class QueryManager:
         """Add a new user to the database. The type of user (Customer, Employee, DeliveryPerson, or base User)
         is determined by the parameters provided. Always creates a base User first, then 'updates' to the specific type."""
 
+        # Hash the password first
+        password_hash, salt = User.hash_password(password)
+        
         # Base user data
         user_data = {
             'username': username,
-            'email': email
+            'email': email,
+            'password_hash': password_hash,
+            'salt': salt
         }
 
         # Add optional base fields
@@ -198,7 +209,6 @@ class QueryManager:
             # Base User
             user = User(**user_data)
 
-        user.set_password(password)
         return user
 
     @staticmethod
@@ -208,6 +218,7 @@ class QueryManager:
         user = User.get(username=username)
         if user:
             user.delete()
+            commit()
             return True
         return False
 
@@ -301,6 +312,7 @@ class QueryManager:
         if hasattr(user, 'status') and status is not None:
             user.status = status
     
+        commit()
         return True
 
 # -=-=-=-=-=- ORDER QUERIES -=-=-=-=-=- #
@@ -317,22 +329,28 @@ class QueryManager:
     @staticmethod
     @db_session
     def create_order(
-                     user_id: int, 
-                     pizza_quantities: List[List[int]], 
-                     extra_ids: Optional[List[int]] = None, 
-                     discount_code: Optional[str] = None, 
-                     status: OrderStatus = OrderStatus.Pending, 
-                     created_at: Optional[datetime] = None, 
-                     delivered_at: Optional[datetime] = None, 
-                     delivery_person_id: Optional[int] = None, 
+                     user_id: int,
+                     pizza_quantities: List[List[int]],
+                     extra_ids: Optional[List[int]] = None,
+                     discount_code: Optional[str] = None,
+                     status: OrderStatus = OrderStatus.Pending,
+                     created_at: Optional[datetime] = None,
+                     delivered_at: Optional[datetime] = None,
+                     delivery_person_id: Optional[int] = None,
                      postal_code: Optional[str] = None
                      ) -> Order:
         """Create a new order with at least one pizza and optional extras, by user ID, with optional discount code and additional order details.
         pizza_quantities should be a list of [pizza_id, quantity] pairs.
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Creating order for user_id: {user_id}")
+        
         user = User.get(id=user_id)
         if not user:
             raise ValueError(f"User with id {user_id} not found")
+        
+        logger.info(f"User found: {user.username}")
 
         # Determine postal code
         final_postal_code = postal_code or user.postalCode
@@ -350,14 +368,20 @@ class QueryManager:
                 raise ValueError(f"Delivery person with id {delivery_person_id} not found")
         else:
             # Try to find an available delivery person first
+            logger.info("Looking for available delivery persons")
             available_dps = QueryManager.get_available_delivery_persons()
+            logger.info(f"Found {len(available_dps) if available_dps else 0} available delivery persons")
             if available_dps:
                 delivery_person = available_dps[0]
+                logger.info(f"Selected delivery person: {delivery_person.username}")
                 # Note: We don't update the status here since the order is just being created
                 # The status will be updated when the order moves to In_Progress
             else:
                 # If no available delivery persons, randomly assign one
+                logger.info("No available delivery persons, selecting random one")
                 delivery_person = QueryManager.get_random_delivery_person()
+                if delivery_person:
+                    logger.info(f"Selected random delivery person: {delivery_person.username}")
 
         if not pizza_quantities:
             raise ValueError("At least one pizza is required")
@@ -367,14 +391,25 @@ class QueryManager:
         extra_ids_set = set(extra_ids) if extra_ids else set()
 
         # Fetch all pizzas and extras in single queries
-        pizzas = list(Pizza.select(lambda p: p.id in pizza_ids)) if pizza_ids else []
-        extras = list(Extra.select(lambda e: e.id in extra_ids_set)) if extra_ids_set else []
+        logger.info(f"Fetching pizzas with IDs: {pizza_ids}")
+        pizzas = Pizza.select(lambda p: p.id in pizza_ids)[:] if pizza_ids else []
+        logger.info(f"Found {len(pizzas)} pizzas")
+        
+        logger.info(f"Fetching extras with IDs: {extra_ids_set}")
+        extras = Extra.select(lambda e: e.id in extra_ids_set)[:] if extra_ids_set else []
+        logger.info(f"Found {len(extras)} extras")
         
         # Create dictionaries for O(1) lookups
-        pizza_dict = {p.id: p for p in pizzas}
-        extra_dict = {e.id: e for e in extras}
+        logger.info("Creating pizza dictionary")
+        pizza_dict = {p.id: p for p in list(pizzas)}
+        logger.info("Pizza dictionary created")
+        
+        logger.info("Creating extra dictionary")
+        extra_dict = {e.id: e for e in list(extras)}
+        logger.info("Extra dictionary created")
 
         # Create the order
+        logger.info("Creating order object")
         order = Order(
             user=user,
             status=status,
@@ -383,25 +418,32 @@ class QueryManager:
             delivered_at=delivered_at,
             delivery_person=delivery_person
         )
+        logger.info("Order object created")
 
         # Add pizzas with quantities using dictionary lookup
+        logger.info("Adding pizzas to order")
         for item in pizza_quantities:
             pizza_id, quantity = item
             pizza = pizza_dict.get(pizza_id)
             if not pizza:
                 raise ValueError(f"Pizza with id {pizza_id} not found")
             OrderPizzaRelation(order=order, pizza=pizza, quantity=quantity)
+        logger.info("Pizzas added to order")
 
         # Add extras if provided using dictionary lookup
         if extra_ids:
+            logger.info("Adding extras to order")
             for extra_id in extra_ids:
                 extra = extra_dict.get(extra_id)
                 if not extra:
                     raise ValueError(f"Extra with id {extra_id} not found")
                 order.extras.add(extra)
+            logger.info("Extras added to order")
 
 #TODO: Add discount code validation (check existence, validity period, usage)
-
+        logger.info("Committing order to database")
+        commit()
+        logger.info("Order committed successfully")
         return order
 
     @staticmethod
@@ -435,6 +477,7 @@ class QueryManager:
         if postal_code is not None:
             order.postalCode = postal_code
 
+        commit()
         return order
     
     @staticmethod
@@ -445,6 +488,7 @@ class QueryManager:
         if not order:
             return False
         order.delete()
+        commit()
         return True
     
 #TODO: implement/adjust discount capability
@@ -514,9 +558,12 @@ class QueryManager:
         if not user or not isinstance(user, Customer):
             return None
 
+        # Increment points
         user.loyalty_points += 1
-
+        
+        # Check if points reached 10 after increment
         if user.loyalty_points >= 10:
+            # Create discount code
             now = datetime.now()
             valid_until = now + timedelta(days=30)
             code = secrets.token_hex(8).upper()
@@ -527,9 +574,13 @@ class QueryManager:
                 valid_from=now,
                 used=False
             )
+            # Reset points to 0
             user.loyalty_points = 0
+            commit()
             return dc
-
+        
+        # Points are less than 10, just commit the increment
+        commit()
         return None
 
 #PLEASE NOTE THAT: when precentage is 0.0, this means that its a birthday code. This would mean that you get 1 free pizza (cheapest) and 1 free drink
@@ -540,8 +591,12 @@ class QueryManager:
         Finds customers with birthday today and creates discount codes
         for 1 free pizza and 1 free drink (percentage set to 0, special handling required)."""
         today = date.today()
-        birthday_customers = Customer.select(lambda c: c.birthdate and c.birthdate.month == today.month
-                                             and c.birthdate.day == today.day)[:]
+        # Get all customers and filter in Python due to Pony ORM limitations
+        all_customers = Customer.select()[:]
+        birthday_customers = []
+        for c in all_customers:
+            if c.birthdate and c.birthdate.month == today.month and c.birthdate.day == today.day:
+                birthday_customers.append(c)
         discount_codes = []
         for customer in birthday_customers:
             now = datetime.now()
@@ -555,6 +610,7 @@ class QueryManager:
                 used=False
             )
             discount_codes.append(dc)
+        commit()
         return discount_codes
 
     @staticmethod
@@ -599,7 +655,14 @@ class QueryManager:
     @db_session
     def get_available_delivery_persons() -> List[DeliveryPerson]:
         """Get all delivery persons who are currently available for assignments."""
-        return DeliveryPerson.select(lambda dp: dp.status == DeliveryStatus.Available)[:]
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("Getting available delivery persons")
+        # Fetch all delivery persons and filter in Python due to Pony ORM limitations
+        all_delivery_persons = list(DeliveryPerson.select()[:])
+        available_delivery_persons = [dp for dp in all_delivery_persons if dp.status == DeliveryStatus.Available]
+        logger.info(f"Found {len(available_delivery_persons)} available delivery persons")
+        return available_delivery_persons
         
     @staticmethod
     @db_session
@@ -609,6 +672,7 @@ class QueryManager:
         if not dp:
             raise ValueError(f"Delivery person with id {delivery_person_id} not found")
         dp.status = new_status
+        commit()
         return dp
     
     @staticmethod
@@ -630,10 +694,14 @@ class QueryManager:
         if not available_dps:
             return None  # No available delivery person
 
+        # Sort by ID to ensure consistent selection
+        available_dps.sort(key=lambda dp: dp.id)
+        
         # Assign the first available delivery person
         dp = available_dps[0]
         order.delivery_person = dp
         dp.status = DeliveryStatus.On_Delivery
+        commit()
         return {'order_id': order_id, 'delivery_person_id': dp.id}
     
     @staticmethod
@@ -644,10 +712,17 @@ class QueryManager:
         Returns:
             A random delivery person if any exist, None otherwise
         """
-        all_delivery_persons = DeliveryPerson.select()[:]
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("Getting random delivery person")
+        all_delivery_persons = list(DeliveryPerson.select()[:])
+        logger.info(f"Found {len(all_delivery_persons)} total delivery persons")
         if not all_delivery_persons:
+            logger.info("No delivery persons found")
             return None
-        return random.choice(all_delivery_persons)
+        selected = random.choice(all_delivery_persons)
+        logger.info(f"Selected random delivery person: {selected.username}")
+        return selected
     
     @staticmethod
     @db_session
@@ -693,10 +768,10 @@ class QueryManager:
         pizza_ids = [item[0] for item in pizza_quantities]
         
         # Fetch all pizzas in a single query
-        pizzas = list(Pizza.select(lambda p: p.id in pizza_ids)) if pizza_ids else []
+        pizzas = list(Pizza.select(lambda p: p.id in pizza_ids)[:]) if pizza_ids else []
         
         # Create dictionary for O(1) lookups
-        pizza_dict = {p.id: p for p in pizzas}
+        pizza_dict = {p.id: p for p in list(pizzas)}
         
         # Validate all pizzas exist and check stock
         for item in pizza_quantities:
@@ -749,8 +824,8 @@ class QueryManager:
         # Add extras if provided
         if extra_ids:
             extra_ids_set = set(extra_ids)
-            extras = list(Extra.select(lambda e: e.id in extra_ids_set)) if extra_ids_set else []
-            extra_dict = {e.id: e for e in extras}
+            extras = list(Extra.select(lambda e: e.id in extra_ids_set)[:]) if extra_ids_set else []
+            extra_dict = {e.id: e for e in list(extras)}
             
             for extra_id in extra_ids:
                 extra = extra_dict.get(extra_id)
@@ -767,6 +842,7 @@ class QueryManager:
         if discount_code:
             logger.info(f"Discount code provided: {discount_code} (validation not implemented)")
         
+        commit()
         return order
     
     # Optional: List undelivered or delayed orders
@@ -780,47 +856,62 @@ class QueryManager:
     @db_session
     def get_earnings_by_gender(gender: str) -> float:
         """Get total earnings (salaries) for employees filtered by gender."""
-        return sum(e.salary for e in Employee if e.Gender == gender)
+        return sum(e.salary for e in list(Employee.select()[:]) if e.Gender == gender)
 
     @staticmethod
     @db_session
     def get_earnings_by_age_group(min_age: int, max_age: int) -> float:
         """Get total earnings (salaries) for employees filtered by age group."""
         today = date.today()
-        return sum(e.salary for e in Employee
+        return float(sum(e.salary for e in list(Employee.select()[:])
                    if e.birthdate and (today.year - e.birthdate.year) >= min_age
-                   and (today.year - e.birthdate.year) <= max_age)
+                   and (today.year - e.birthdate.year) <= max_age))
 
     @staticmethod
     @db_session
     def get_earnings_by_postal_code(postal_code: str) -> float:
         """Get total earnings (salaries) for employees filtered by postal code."""
-        return sum(e.salary for e in Employee if e.postalCode == postal_code)
+        return sum(e.salary for e in list(Employee.select()[:]) if e.postalCode == postal_code)
 
 # Average of earnings:
     @staticmethod
     @db_session
     def get_average_salary_by_gender(gender: str) -> float:
         """Get average salary for employees filtered by gender."""
-        result = select(lambda e: avg(e.salary) for e in Employee if e.Gender == gender).first()
-        return result or 0.0
+        # Get all employees and calculate average in Python due to Pony ORM limitations
+        employees = list(Employee.select()[:])
+        filtered_employees = [e for e in employees if e.Gender == gender]
+        if not filtered_employees:
+            return 0.0
+        return sum(e.salary for e in filtered_employees) / len(filtered_employees)
 
     @staticmethod
     @db_session
     def get_average_salary_by_age_group(min_age: int, max_age: int) -> float:
         """Get average salary for employees filtered by age group."""
         today = date.today()
-        result = select(avg(e.salary) for e in Employee
-                        if e.birthdate and (today.year - e.birthdate.year) >= min_age
-                        and (today.year - e.birthdate.year) <= max_age).first()
-        return result or 0.0
+        # Get all employees and calculate average in Python due to Pony ORM limitations
+        employees = Employee.select()[:]
+        filtered_employees = []
+        for e in employees:
+            if e.birthdate:
+                age = today.year - e.birthdate.year
+                if min_age <= age <= max_age:
+                    filtered_employees.append(e)
+        if not filtered_employees:
+            return 0.0
+        return sum(e.salary for e in filtered_employees) / len(filtered_employees)
 
     @staticmethod
     @db_session
     def get_average_salary_by_postal_code(postal_code: str) -> float:
         """Get average salary for employees filtered by postal code."""
-        result = select(lambda e: avg(e.salary) for e in Employee if e.postalCode == postal_code).first()
-        return result or 0.0
+        # Get all employees and calculate average in Python due to Pony ORM limitations
+        employees = list(Employee.select()[:])
+        filtered_employees = [e for e in employees if e.postalCode == postal_code]
+        if not filtered_employees:
+            return 0.0
+        return sum(e.salary for e in filtered_employees) / len(filtered_employees)
 
 
 # -=-=-=-=-=- REPORT QUERIES -=-=-=-=-=- #
@@ -829,15 +920,25 @@ class QueryManager:
     @db_session
     def get_undelivered_customer_orders() -> List[Order]:
         """Get all undelivered orders placed by customers."""
-        return Order.select(lambda o: isinstance(o.user, Customer)
-                            and o.status in [OrderStatus.Pending, OrderStatus.In_Progress])[:]
+        # Get all orders and filter in Python due to Pony ORM limitations
+        all_orders = Order.select()[:]
+        customer_orders = []
+        for o in all_orders:
+            if isinstance(o.user, Customer) and o.status in [OrderStatus.Pending, OrderStatus.In_Progress]:
+                customer_orders.append(o)
+        return customer_orders
 
     @staticmethod
     @db_session
     def get_undelivered_staff_orders() -> List[Order]:
         """Get all undelivered orders placed by staff (employees)."""
-        return Order.select(lambda o: isinstance(o.user, Employee)
-                            and o.status in [OrderStatus.Pending, OrderStatus.In_Progress])[:]
+        # Get all orders and filter in Python due to Pony ORM limitations
+        all_orders = Order.select()[:]
+        staff_orders = []
+        for o in all_orders:
+            if isinstance(o.user, Employee) and o.status in [OrderStatus.Pending, OrderStatus.In_Progress]:
+                staff_orders.append(o)
+        return staff_orders
     
     #TODO: Check if this works as intended
     @staticmethod
@@ -845,7 +946,21 @@ class QueryManager:
     def get_top_3_pizzas_past_month() -> List[Dict[str, Any]]:
         """Get the top 3 pizzas sold in the past month by quantity."""
         past_month = datetime.now() - timedelta(days=30)
-        top_pizzas = select(lambda: (p, sum(opr.quantity)) for p in Pizza for opr in p.order_relations for o in Order
-                            if opr.order == o and o.created_at >= past_month) \
-                            .order_by(-2)[:3]
-        return [{'pizza': p, 'total_quantity': qty} for p, qty in top_pizzas]
+        # Get all orders and filter in Python due to Pony ORM limitations
+        all_orders = Order.select()[:]
+        filtered_orders = []
+        for o in all_orders:
+            if o.created_at >= past_month:
+                filtered_orders.append(o)
+        pizza_quantities = {}
+        
+        for order in filtered_orders:
+            for opr in list(order.pizza_relations):
+                pizza_id = opr.pizza.id
+                if pizza_id not in pizza_quantities:
+                    pizza_quantities[pizza_id] = {'pizza': opr.pizza, 'quantity': 0}
+                pizza_quantities[pizza_id]['quantity'] += opr.quantity
+        
+        # Sort by quantity and get top 3
+        sorted_pizzas = sorted(pizza_quantities.values(), key=lambda x: x['quantity'], reverse=True)[:3]
+        return [{'pizza': item['pizza'], 'total_quantity': item['quantity']} for item in sorted_pizzas]

@@ -36,6 +36,18 @@ class PizzaInfo(BaseModel):
     description: Optional[str] = None
     stock: int
 
+class PaginationInfo(BaseModel):
+    page: int
+    page_size: int
+    total_count: int
+    total_pages: int
+    has_next: bool
+    has_prev: bool
+
+class PaginatedPizzaResponse(BaseModel):
+    pizzas: List[PizzaInfo]
+    pagination: PaginationInfo
+
 class CustomerInfo(BaseModel):
     id: int
     username: str
@@ -51,6 +63,7 @@ class CustomerSpecificResponse(SecuredInfoResponse):
     loyalty_points: int
     birthday_order: bool
     available_pizzas: List[PizzaInfo] = []
+    pizza_pagination: Optional[PaginationInfo] = None
 
 class EmployeeSpecificResponse(SecuredInfoResponse):
     position: str
@@ -72,9 +85,12 @@ async def get_current_user_from_token(token: str = Depends(oauth2_scheme)):
         )
     
     try:
+        logger.debug(f"Verifying token: {token[:20]}...")
         payload = verify_token(token)
         username: str = payload.get("sub")
         user_id: int = payload.get("user_id")
+        
+        logger.debug(f"Token verified for user: {username}, user_id: {user_id}")
         
         if username is None:
             raise HTTPException(
@@ -101,7 +117,7 @@ async def get_current_user_from_token(token: str = Depends(oauth2_scheme)):
 async def get_current_customer(current_user: dict = Depends(get_current_user_from_token)):
     """Ensure current user is a customer"""
     with db_session:
-        user = Customer.select(lambda u: u.username == current_user["username"]).first()
+        user = Customer.get(username=current_user["username"])
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -112,7 +128,7 @@ async def get_current_customer(current_user: dict = Depends(get_current_user_fro
 async def get_current_employee(current_user: dict = Depends(get_current_user_from_token)):
     """Ensure current user is an employee"""
     with db_session:
-        user = Employee.select(lambda u: u.username == current_user["username"]).first()
+        user = Employee.get(username=current_user["username"])
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -123,7 +139,7 @@ async def get_current_employee(current_user: dict = Depends(get_current_user_fro
 async def get_current_delivery_person(current_user: dict = Depends(get_current_user_from_token)):
     """Ensure current user is a delivery person"""
     with db_session:
-        user = DeliveryPerson.select(lambda u: u.username == current_user["username"]).first()
+        user = DeliveryPerson.get(username=current_user["username"])
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -139,7 +155,7 @@ async def get_secured_info(
     try:
         with db_session:
             # Get the user from database
-            user = User.select(lambda u: u.username == current_user["username"]).first()
+            user = User.get(username=current_user["username"])
             if not user:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -196,7 +212,9 @@ async def get_secured_info(
 
 @router.get("/dashboard", response_model=Union[CustomerSpecificResponse, EmployeeSpecificResponse, DeliveryPersonSpecificResponse])
 async def get_dashboard(
-    current_user: dict = Depends(get_current_user_from_token)
+    current_user: dict = Depends(get_current_user_from_token),
+    page: int = 1,
+    page_size: int = 10
 ):
     """Get user dashboard based on user type"""
     try:
@@ -204,7 +222,7 @@ async def get_dashboard(
         with db_session:
             # Get the user from database
             # Fix: Use lambda function instead of generator expression for Pony ORM
-            user = User.select(lambda u: u.username == current_user["username"]).first()
+            user = User.get(username=current_user["username"])
             logger.debug(f"Found user: {user}")
             if not user:
                 raise HTTPException(
@@ -214,20 +232,32 @@ async def get_dashboard(
             
             # Check user type and return appropriate response
             if isinstance(user, Customer):
-                # Get all available pizzas for customers
-                pizzas = QueryManager.get_all_pizzas()
-                logger.debug(f"Retrieved pizzas: {pizzas}")
-                # Convert QueryResultIterator to list before iteration
-                pizza_list = list(pizzas) if pizzas else []
-                logger.debug(f"Pizza list: {pizza_list}")
-                pizza_info_list = [
-                    PizzaInfo(
-                        id=pizza.id,
-                        name=pizza.name,
-                        description=pizza.description if hasattr(pizza, 'description') else None,
-                        stock=pizza.stock
-                    ) for pizza in pizza_list
-                ]
+                # Get paginated pizzas for customers
+                try:
+                    pizzas_data = QueryManager.get_pizzas_paginated(page=page, page_size=page_size)
+                    logger.debug(f"Retrieved pizzas data: {pizzas_data}")
+                    
+                    # Convert pizzas to PizzaInfo objects
+                    pizza_info_list = []
+                    for pizza in pizzas_data["pizzas"]:
+                        try:
+                            logger.debug(f"Processing pizza: {pizza}")
+                            pizza_info = PizzaInfo(
+                                id=pizza.id,
+                                name=pizza.name,
+                                description=pizza.description if hasattr(pizza, 'description') else None,
+                                stock=pizza.stock
+                            )
+                            pizza_info_list.append(pizza_info)
+                        except Exception as e:
+                            logger.error(f"Error processing pizza {pizza}: {str(e)}")
+                            raise
+                except Exception as e:
+                    logger.error(f"Error in pizzas processing: {str(e)}")
+                    raise
+                
+                # Create pagination info
+                pagination_info = PaginationInfo(**pizzas_data["pagination"])
                 
                 return CustomerSpecificResponse(
                     message="Customer dashboard",
@@ -237,7 +267,8 @@ async def get_dashboard(
                     email=user.email,
                     loyalty_points=user.loyalty_points,
                     birthday_order=user.birthday_order,
-                    available_pizzas=pizza_info_list
+                    available_pizzas=pizza_info_list,
+                    pizza_pagination=pagination_info
                 )
             
             elif isinstance(user, Employee):
@@ -351,4 +382,56 @@ async def get_delivery_person_info(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve delivery person information"
+        )
+
+@router.get("/pizzas", response_model=PaginatedPizzaResponse)
+async def get_pizzas_paginated(
+    page: int = 1,
+    page_size: int = 10,
+    current_user: dict = Depends(get_current_user_from_token)
+):
+    """Get pizzas with pagination. Accessible by any authenticated user."""
+    try:
+        # Validate pagination parameters
+        if page < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Page number must be greater than 0"
+            )
+        
+        if page_size < 1 or page_size > 100:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Page size must be between 1 and 100"
+            )
+        
+        # Get paginated pizzas
+        pizzas_data = QueryManager.get_pizzas_paginated(page=page, page_size=page_size)
+        
+        # Convert pizzas to PizzaInfo objects
+        pizza_info_list = [
+            PizzaInfo(
+                id=pizza.id,
+                name=pizza.name,
+                description=pizza.description if hasattr(pizza, 'description') else None,
+                stock=pizza.stock
+            ) for pizza in pizzas_data["pizzas"]
+        ]
+        
+        # Create pagination info
+        pagination_info = PaginationInfo(**pizzas_data["pagination"])
+        
+        return PaginatedPizzaResponse(
+            pizzas=pizza_info_list,
+            pagination=pagination_info
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get_pizzas_paginated: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve paginated pizzas"
         )

@@ -74,6 +74,39 @@ class DeliveryPersonSpecificResponse(EmployeeSpecificResponse):
     status: str
     orders: List[OrderInfo] = []
 
+# Pydantic models for multiple pizza order
+class PizzaQuantity(BaseModel):
+    pizza_id: int
+    quantity: int
+
+class MultiplePizzaOrderRequest(BaseModel):
+    pizza_quantities: List[PizzaQuantity]
+    extra_ids: Optional[List[int]] = None
+    discount_code: Optional[str] = None
+    postal_code: Optional[str] = None
+
+class OrderItemInfo(BaseModel):
+    type: str
+    name: str
+    quantity: int
+    unit_price: float
+    subtotal: float
+
+class DiscountInfo(BaseModel):
+    code: str
+    percentage: float
+    amount: float
+
+class MultiplePizzaOrderResponse(BaseModel):
+    order_id: int
+    status: str
+    message: str
+    total_price: float
+    items: List[OrderItemInfo]
+    discount: Optional[DiscountInfo] = None
+    created_at: str
+    postal_code: str
+
 # Token-based authentication dependency
 async def get_current_user_from_token(token: str = Depends(oauth2_scheme)):
     """Get current authenticated user from Authorization header token"""
@@ -434,4 +467,113 @@ async def get_pizzas_paginated(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve paginated pizzas"
+        )
+
+@router.post("/order-multiple-pizzas", response_model=MultiplePizzaOrderResponse, status_code=status.HTTP_201_CREATED)
+async def order_multiple_pizzas(
+    request: MultiplePizzaOrderRequest,
+    customer: Customer = Depends(get_current_customer)
+):
+    """Create an order with multiple pizzas for authenticated customers."""
+    try:
+        logger.debug(f"Customer {customer.username} attempting to order multiple pizzas")
+        logger.debug(f"Request data: {request}")
+        
+        # Validate pizza quantities
+        if not request.pizza_quantities:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least one pizza must be ordered"
+            )
+        
+        # Convert PizzaQuantity objects to [pizza_id, quantity] pairs for QueryManager
+        pizza_quantities_list = [[pq.pizza_id, pq.quantity] for pq in request.pizza_quantities]
+        
+        with db_session:
+            # Create the order using QueryManager
+            order = QueryManager.create_multiple_pizza_order(
+                user_id=customer.id,
+                pizza_quantities=pizza_quantities_list,
+                extra_ids=request.extra_ids,
+                discount_code=request.discount_code,
+                postal_code=request.postal_code
+            )
+            
+            logger.info(f"Successfully created order {order.id} for customer {customer.username}")
+            
+            # Get order confirmation details
+            order_details = QueryManager.get_order_confirmation(order.id)
+            if not order_details:
+                # This shouldn't happen if the order was just created
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to retrieve order confirmation"
+                )
+            
+            # Create response
+            response = MultiplePizzaOrderResponse(
+                order_id=order.id,
+                status=order.status.value,
+                message="Order created successfully",
+                total_price=order_details["total_price"],
+                items=[
+                    OrderItemInfo(
+                        type=item["type"],
+                        name=item["name"],
+                        quantity=item["quantity"],
+                        unit_price=item["unit_price"],
+                        subtotal=item["subtotal"]
+                    ) for item in order_details["items"]
+                ],
+                discount=(
+                    DiscountInfo(
+                        code=order_details["discount"]["code"],
+                        percentage=order_details["discount"]["percentage"],
+                        amount=order_details["discount"]["amount"]
+                    ) if order_details["discount"] else None
+                ),
+                created_at=order.created_at.isoformat() if order.created_at else "",
+                postal_code=order.postalCode
+            )
+            
+            logger.debug(f"Created response for order {order.id}")
+            return response
+            
+    except ValueError as e:
+        # Handle specific validation errors from QueryManager
+        error_message = str(e)
+        status_code = status.HTTP_400_BAD_REQUEST
+        
+        # Check for specific error types to return appropriate status codes
+        if "not found" in error_message.lower():
+            if "pizza" in error_message.lower():
+                status_code = status.HTTP_404_NOT_FOUND
+            elif "extra" in error_message.lower():
+                status_code = status.HTTP_404_NOT_FOUND
+            elif "user" in error_message.lower():
+                status_code = status.HTTP_401_UNAUTHORIZED
+        elif "insufficient stock" in error_message.lower():
+            status_code = status.HTTP_400_BAD_REQUEST
+        elif "must be positive" in error_message.lower():
+            status_code = status.HTTP_400_BAD_REQUEST
+        elif "postal code" in error_message.lower():
+            status_code = status.HTTP_400_BAD_REQUEST
+            
+        logger.error(f"Validation error in order_multiple_pizzas: {error_message}")
+        raise HTTPException(
+            status_code=status_code,
+            detail=error_message
+        )
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+        
+    except Exception as e:
+        # Handle unexpected errors
+        logger.error(f"Unexpected error in order_multiple_pizzas: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create order due to an internal error"
         )

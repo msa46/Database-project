@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 from pony.orm import db_session, select, desc, count, avg
 import re
 import secrets
+import random
 
 from .models import (
     IngredientType, ExtraType, DeliveryStatus, OrderStatus,
@@ -341,12 +342,22 @@ class QueryManager:
         # Determine created_at
         final_created_at = created_at or datetime.now()
 
-        # Get delivery person if provided
+        # Get delivery person if provided, or automatically assign one
         delivery_person = None
         if delivery_person_id:
             delivery_person = DeliveryPerson.get(id=delivery_person_id)
             if not delivery_person:
                 raise ValueError(f"Delivery person with id {delivery_person_id} not found")
+        else:
+            # Try to find an available delivery person first
+            available_dps = QueryManager.get_available_delivery_persons()
+            if available_dps:
+                delivery_person = available_dps[0]
+                # Note: We don't update the status here since the order is just being created
+                # The status will be updated when the order moves to In_Progress
+            else:
+                # If no available delivery persons, randomly assign one
+                delivery_person = QueryManager.get_random_delivery_person()
 
         if not pizza_quantities:
             raise ValueError("At least one pizza is required")
@@ -356,9 +367,9 @@ class QueryManager:
         extra_ids_set = set(extra_ids) if extra_ids else set()
 
         # Fetch all pizzas and extras in single queries
-        pizzas = Pizza.select(lambda p: p.id in pizza_ids) if pizza_ids else []
-        extras = Extra.select(lambda e: e.id in extra_ids_set) if extra_ids_set else []
-
+        pizzas = list(Pizza.select(lambda p: p.id in pizza_ids)) if pizza_ids else []
+        extras = list(Extra.select(lambda e: e.id in extra_ids_set)) if extra_ids_set else []
+        
         # Create dictionaries for O(1) lookups
         pizza_dict = {p.id: p for p in pizzas}
         extra_dict = {e.id: e for e in extras}
@@ -449,7 +460,7 @@ class QueryManager:
         total = 0.0
 
         # Calculate pizza costs
-        for opr in order.pizza_relations:
+        for opr in list(order.pizza_relations):
             unit_price = QueryManager.calculate_pizza_price(opr.pizza.id)
             subtotal = unit_price * opr.quantity
             total += subtotal
@@ -462,7 +473,7 @@ class QueryManager:
             })
 
         # Calculate extra costs
-        for extra in order.extras:
+        for extra in list(order.extras):
             total += extra.price
             items.append({
                 'type': 'extra',
@@ -624,6 +635,139 @@ class QueryManager:
         order.delivery_person = dp
         dp.status = DeliveryStatus.On_Delivery
         return {'order_id': order_id, 'delivery_person_id': dp.id}
+    
+    @staticmethod
+    @db_session
+    def get_random_delivery_person() -> Optional[DeliveryPerson]:
+        """Get a random delivery person from all delivery persons in the database.
+        
+        Returns:
+            A random delivery person if any exist, None otherwise
+        """
+        all_delivery_persons = DeliveryPerson.select()[:]
+        if not all_delivery_persons:
+            return None
+        return random.choice(all_delivery_persons)
+    
+    @staticmethod
+    @db_session
+    def create_multiple_pizza_order(
+        user_id: int,
+        pizza_quantities: List[List[int]],
+        extra_ids: Optional[List[int]] = None,
+        discount_code: Optional[str] = None,
+        postal_code: Optional[str] = None
+    ) -> Order:
+        """Create a new order with multiple pizzas, validating stock and automatically assigning delivery person.
+        
+        Args:
+            user_id: ID of the user placing the order
+            pizza_quantities: List of [pizza_id, quantity] pairs
+            extra_ids: Optional list of extra IDs to include
+            discount_code: Optional discount code to apply
+            postal_code: Optional postal code for delivery
+            
+        Returns:
+            The created Order object
+            
+        Raises:
+            ValueError: If user not found, insufficient stock, or invalid pizza IDs
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Validate user exists
+        user = User.get(id=user_id)
+        if not user:
+            raise ValueError(f"User with id {user_id} not found")
+        
+        # Determine postal code
+        final_postal_code = postal_code or user.postalCode
+        if not final_postal_code:
+            raise ValueError("Postal code must be provided or set on the user")
+        
+        if not pizza_quantities:
+            raise ValueError("At least one pizza is required")
+        
+        # Collect all pizza IDs for batch fetching
+        pizza_ids = [item[0] for item in pizza_quantities]
+        
+        # Fetch all pizzas in a single query
+        pizzas = list(Pizza.select(lambda p: p.id in pizza_ids)) if pizza_ids else []
+        
+        # Create dictionary for O(1) lookups
+        pizza_dict = {p.id: p for p in pizzas}
+        
+        # Validate all pizzas exist and check stock
+        for item in pizza_quantities:
+            pizza_id, quantity = item
+            pizza = pizza_dict.get(pizza_id)
+            if not pizza:
+                raise ValueError(f"Pizza with id {pizza_id} not found")
+            
+            if quantity <= 0:
+                raise ValueError(f"Quantity for pizza {pizza_id} must be positive")
+            
+            if pizza.stock < quantity:
+                raise ValueError(f"Insufficient stock for pizza '{pizza.name}'. Available: {pizza.stock}, Requested: {quantity}")
+        
+        # Find available delivery person or get random one
+        delivery_person = None
+        available_dps = QueryManager.get_available_delivery_persons()
+        
+        if available_dps:
+            delivery_person = available_dps[0]
+            logger.info(f"Assigned available delivery person: {delivery_person.username}")
+        else:
+            delivery_person = QueryManager.get_random_delivery_person()
+            if delivery_person:
+                logger.info(f"No available delivery persons, randomly assigned: {delivery_person.username}")
+            else:
+                logger.warning("No delivery persons available in the system")
+        
+        # Create the order
+        order = Order(
+            user=user,
+            status=OrderStatus.Pending,
+            postalCode=final_postal_code,
+            created_at=datetime.now(),
+            delivery_person=delivery_person
+        )
+        
+        # Add pizzas with quantities and update stock
+        for item in pizza_quantities:
+            pizza_id, quantity = item
+            pizza = pizza_dict.get(pizza_id)
+            
+            # Create the pizza relation
+            OrderPizzaRelation(order=order, pizza=pizza, quantity=quantity)
+            
+            # Update stock
+            pizza.stock -= quantity
+            logger.info(f"Updated stock for pizza '{pizza.name}': {pizza.stock + quantity} -> {pizza.stock}")
+        
+        # Add extras if provided
+        if extra_ids:
+            extra_ids_set = set(extra_ids)
+            extras = list(Extra.select(lambda e: e.id in extra_ids_set)) if extra_ids_set else []
+            extra_dict = {e.id: e for e in extras}
+            
+            for extra_id in extra_ids:
+                extra = extra_dict.get(extra_id)
+                if not extra:
+                    raise ValueError(f"Extra with id {extra_id} not found")
+                order.extras.add(extra)
+        
+        # Update delivery person status if they were available
+        if delivery_person and delivery_person.status == DeliveryStatus.Available:
+            delivery_person.status = DeliveryStatus.On_Delivery
+            logger.info(f"Updated delivery person {delivery_person.username} status to On_Delivery")
+        
+        # TODO: Apply discount code validation if provided
+        if discount_code:
+            logger.info(f"Discount code provided: {discount_code} (validation not implemented)")
+        
+        return order
     
     # Optional: List undelivered or delayed orders
  

@@ -8,7 +8,7 @@ import os
 import logging
 import traceback
 
-from ..database.models import User, Customer, Employee, DeliveryPerson, Pizza, Order
+from ..database.models import User, Customer, Employee, DeliveryPerson, Pizza, Order, IngredientType
 from ..database.queryManager import QueryManager
 from ..database.views import MenuView, DietaryFilter
 from .auth import verify_token, SECRET_KEY, ALGORITHM
@@ -31,11 +31,25 @@ class SecuredInfoResponse(BaseModel):
     username: str
     email: str
 
+class IngredientInfo(BaseModel):
+    name: str
+    price: float
+    type: str
+
 class PizzaInfo(BaseModel):
     id: int
     name: str
     description: Optional[str] = None
+    price: float
+    dietary_type: str
     stock: int
+    ingredients: List[IngredientInfo] = []
+
+class ExtraInfo(BaseModel):
+    id: int
+    name: str
+    price: float
+    type: str
 
 class PaginationInfo(BaseModel):
     page: int
@@ -65,6 +79,7 @@ class CustomerSpecificResponse(SecuredInfoResponse):
     birthday_order: bool
     available_pizzas: List[PizzaInfo] = []
     pizza_pagination: Optional[PaginationInfo] = None
+    available_extras: List[ExtraInfo] = []
 
 class EmployeeSpecificResponse(SecuredInfoResponse):
     position: str
@@ -248,7 +263,9 @@ async def get_secured_info(
 async def get_dashboard(
     current_user: dict = Depends(get_current_user_from_token),
     page: int = 1,
-    page_size: int = 10
+    page_size: int = 10,
+    dietary_filter: str = "all",
+    available_only: bool = False
 ):
     """Get user dashboard based on user type"""
     try:
@@ -266,26 +283,66 @@ async def get_dashboard(
             
             # Check user type and return appropriate response
             if isinstance(user, Customer):
-                # Get pizzas with prices for customers
+                # Get pizzas with prices for customers (with dietary filtering and availability)
                 try:
-                    all_pizzas = MenuView.get_pizzas_with_prices_and_filters(DietaryFilter.ALL)
-                    logger.debug(f"Retrieved {len(all_pizzas)} pizzas with prices")
+                    # Convert string parameter to DietaryFilter enum
+                    if dietary_filter == "vegan":
+                        filter_enum = DietaryFilter.VEGAN
+                    elif dietary_filter == "vegetarian":
+                        filter_enum = DietaryFilter.VEGETARIAN
+                    elif dietary_filter == "normal":
+                        filter_enum = DietaryFilter.NORMAL
+                    else:
+                        filter_enum = DietaryFilter.ALL
+
+                    # Choose appropriate method based on availability filter
+                    if available_only:
+                        all_pizzas = MenuView.get_available_pizzas_with_prices()
+                        # Apply dietary filter manually since get_available_pizzas_with_prices doesn't support filtering
+                        if filter_enum != DietaryFilter.ALL:
+                            # Filter the results based on dietary type
+                            filtered_pizzas = []
+                            for pizza in all_pizzas:
+                                pizza_entity = Pizza.get(id=pizza['id'])
+                                if pizza_entity:
+                                    pizza_dietary_type = MenuView.get_pizza_dietary_type(pizza_entity)
+                                    if pizza_dietary_type == filter_enum:
+                                        filtered_pizzas.append(pizza)
+                            all_pizzas = filtered_pizzas
+                    else:
+                        all_pizzas = MenuView.get_pizzas_with_prices_and_filters(filter_enum)
+
+                    logger.debug(f"Retrieved {len(all_pizzas)} pizzas with prices (filter: {dietary_filter}, available_only: {available_only})")
 
                     # Apply pagination to the results
                     start_idx = (page - 1) * page_size
                     end_idx = start_idx + page_size
                     paginated_pizzas = all_pizzas[start_idx:end_idx]
 
-                    # Convert pizzas to PizzaInfo objects (now including price)
+                    # Convert pizzas to PizzaInfo objects (with full details)
                     pizza_info_list = []
                     for pizza in paginated_pizzas:
                         try:
                             logger.debug(f"Processing pizza: {pizza['name']}")
+
+                            # Convert ingredients to IngredientInfo objects
+                            ingredients_info = []
+                            for ing in pizza.get('ingredients', []):
+                                ingredient_info = IngredientInfo(
+                                    name=ing['name'],
+                                    price=ing['price'],
+                                    type=ing['type']
+                                )
+                                ingredients_info.append(ingredient_info)
+
                             pizza_info = PizzaInfo(
                                 id=pizza['id'],
                                 name=pizza['name'],
                                 description=pizza.get('description'),
-                                stock=pizza['stock']
+                                price=pizza['price'],
+                                dietary_type=pizza['dietary_type'],
+                                stock=pizza['stock'],
+                                ingredients=ingredients_info
                             )
                             pizza_info_list.append(pizza_info)
                         except Exception as e:
@@ -307,7 +364,31 @@ async def get_dashboard(
                 except Exception as e:
                     logger.error(f"Error in pizzas processing: {str(e)}")
                     raise
-                
+
+                # Get extras (drinks & desserts) for customers
+                try:
+                    extras_data = MenuView.get_extras_with_prices()
+                    logger.debug(f"Retrieved {len(extras_data)} extras")
+
+                    # Convert extras to ExtraInfo objects
+                    extras_info_list = []
+                    for extra in extras_data:
+                        try:
+                            logger.debug(f"Processing extra: {extra['name']}")
+                            extra_info = ExtraInfo(
+                                id=extra['id'],
+                                name=extra['name'],
+                                price=extra['price'],
+                                type=extra['type']
+                            )
+                            extras_info_list.append(extra_info)
+                        except Exception as e:
+                            logger.error(f"Error processing extra {extra}: {str(e)}")
+                            raise
+                except Exception as e:
+                    logger.error(f"Error in extras processing: {str(e)}")
+                    raise
+
                 return CustomerSpecificResponse(
                     message="Customer dashboard",
                     user_type="customer",
@@ -317,7 +398,8 @@ async def get_dashboard(
                     loyalty_points=user.loyalty_points,
                     birthday_order=user.birthday_order,
                     available_pizzas=pizza_info_list,
-                    pizza_pagination=pagination_info
+                    pizza_pagination=pagination_info,
+                    available_extras=extras_info_list
                 )
             
             elif isinstance(user, Employee):

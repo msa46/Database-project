@@ -24,7 +24,7 @@ class QueryManager:
     @db_session
     def get_extras_by_type(extra_type: ExtraType) -> List[Extra]:
         """Example: Get extras by type."""
-        return Extra.select(lambda e: e.type == extra_type)[:]
+        return list(Extra.select(lambda e: e.type == extra_type))
 
     @staticmethod
     @db_session
@@ -73,8 +73,9 @@ class QueryManager:
             # Get total count
             total_count = Pizza.select().count()
             
-            # Get pizzas for the current page
-            pizzas = Pizza.select()[offset:offset + page_size][:]
+            # Get all pizzas first, then slice
+            all_pizzas = list(Pizza.select())
+            pizzas = all_pizzas[offset:offset + page_size]
             
             # Calculate pagination info
             total_pages = (total_count + page_size - 1) // page_size  # Ceiling division
@@ -82,7 +83,7 @@ class QueryManager:
             has_prev = page > 1
             
             return {
-                "pizzas": pizzas[:],
+                "pizzas": pizzas,
                 "pagination": {
                     "page": page,
                     "page_size": page_size,
@@ -104,7 +105,7 @@ class QueryManager:
     def get_vegan_pizzas() -> List[Pizza]:
         """Get all pizzas that are vegan (all ingredients are vegan)."""
         # This is a complex query that needs to be done in two steps due to Pony ORM limitations
-        all_pizzas = Pizza.select(lambda p: p.ingredients)[:]
+        all_pizzas = list(Pizza.select(lambda p: p.ingredients))
         vegan_pizzas = []
         for pizza in all_pizzas:
             if pizza.ingredients and all(i.type == IngredientType.Vegan for i in list(pizza.ingredients)):
@@ -116,7 +117,7 @@ class QueryManager:
     def get_vegetarian_pizzas() -> List[Pizza]:
         """Get all pizzas that are vegetarian (all ingredients are vegan or vegetarian)."""
         # This is a complex query that needs to be done in two steps due to Pony ORM limitations
-        all_pizzas = Pizza.select(lambda p: p.ingredients)[:]
+        all_pizzas = list(Pizza.select(lambda p: p.ingredients))
         vegetarian_pizzas = []
         for pizza in all_pizzas:
             if pizza.ingredients and all(i.type in [IngredientType.Vegan, IngredientType.Vegetarian] for i in list(pizza.ingredients)):
@@ -387,12 +388,12 @@ class QueryManager:
             extra_ids_set = set(extra_ids) if extra_ids else set()
 
             # Fetch all pizzas and extras in single queries
-            pizzas = Pizza.select(p for p in Pizza if p.id in pizza_ids) if pizza_ids else []
-            extras = Extra.select(e for e in Extra if e.id in extra_ids_set) if extra_ids_set else []
+            pizzas = Pizza.select(lambda p: p.id in pizza_ids) if pizza_ids else []
+            extras = Extra.select(lambda e: e.id in extra_ids_set) if extra_ids_set else []
 
             # Create dictionaries for O(1) lookups
-            pizza_dict = {p.id: p for p in pizzas}
-            extra_dict = {e.id: e for e in extras}
+            pizza_dict = {p.id: p for p in list(pizzas)}
+            extra_dict = {e.id: e for e in list(extras)}
 
             # Validate all pizzas exist before creating order
             for pizza_id, quantity in pizza_quantities:
@@ -473,7 +474,7 @@ class QueryManager:
                     cheapest_pizza = None
                     cheapest_price = float('inf')
 
-                    for opr in order.Pizzas:
+                    for opr in order.pizza_relations:
                         pizza_price = QueryManager.calculate_pizza_price(opr.pizza.id)
                         if pizza_price < cheapest_price:
                             cheapest_price = pizza_price
@@ -626,19 +627,6 @@ class QueryManager:
             logger.error(f"Traceback: {traceback.format_exc()}")
             # Transaction will be automatically rolled back if commit() wasn't called
             raise
-        commit()
-        return order
-    
-    @staticmethod
-    @db_session
-    def delete_order(order_id: int) -> bool:
-        """Delete an order from the database by order ID."""
-        order = Order.get(id=order_id)
-        if not order:
-            return False
-        order.delete()
-        commit()
-        return True
     
     @staticmethod
     @db_session
@@ -686,7 +674,7 @@ class QueryManager:
 
                 # Find cheapest pizza in order
                 cheapest_pizza_price = float('inf')
-                for opr in order.Pizzas:
+                for opr in order.pizza_relations:
                     pizza_price = QueryManager.calculate_pizza_price(opr.pizza.id)
                     cheapest_pizza_price = min(cheapest_pizza_price, pizza_price)
 
@@ -796,7 +784,7 @@ class QueryManager:
         for 1 free pizza and 1 free drink (percentage set to 0, special handling required)."""
         today = date.today()
         # Get all customers and filter in Python due to Pony ORM limitations
-        all_customers = Customer.select()[:]
+        all_customers = list(Customer.select())
         birthday_customers = []
         for c in all_customers:
             if c.birthdate and c.birthdate.month == today.month and c.birthdate.day == today.day:
@@ -951,7 +939,6 @@ class QueryManager:
         return selected
     
     @staticmethod
-    @db_session
     def create_multiple_pizza_order(
         user_id: int,
         pizza_quantities: List[List[int]],
@@ -994,7 +981,7 @@ class QueryManager:
         pizza_ids = [item[0] for item in pizza_quantities]
         
         # Fetch all pizzas in a single query
-        pizzas = list(Pizza.select(lambda p: p.id in pizza_ids)[:]) if pizza_ids else []
+        pizzas = list(Pizza.select(lambda p: p.id in pizza_ids)) if pizza_ids else []
         
         # Create dictionary for O(1) lookups
         pizza_dict = {p.id: p for p in list(pizzas)}
@@ -1050,7 +1037,7 @@ class QueryManager:
         # Add extras if provided
         if extra_ids:
             extra_ids_set = set(extra_ids)
-            extras = list(Extra.select(lambda e: e.id in extra_ids_set)[:]) if extra_ids_set else []
+            extras = list(Extra.select(lambda e: e.id in extra_ids_set)) if extra_ids_set else []
             extra_dict = {e.id: e for e in list(extras)}
             
             for extra_id in extra_ids:
@@ -1117,7 +1104,7 @@ class QueryManager:
         """Get average salary for employees filtered by age group."""
         today = date.today()
         # Get all employees and calculate average in Python due to Pony ORM limitations
-        employees = Employee.select()[:]
+        employees = list(Employee.select())
         filtered_employees = []
         for e in employees:
             if e.birthdate:
@@ -1147,7 +1134,7 @@ class QueryManager:
     def get_undelivered_customer_orders() -> List[Order]:
         """Get all undelivered orders placed by customers."""
         # Get all orders and filter in Python due to Pony ORM limitations
-        all_orders = Order.select()[:]
+        all_orders = list(Order.select())
         customer_orders = []
         for o in all_orders:
             if isinstance(o.user, Customer) and o.status in [OrderStatus.Pending, OrderStatus.In_Progress]:
@@ -1159,7 +1146,7 @@ class QueryManager:
     def get_undelivered_staff_orders() -> List[Order]:
         """Get all undelivered orders placed by staff (employees)."""
         # Get all orders and filter in Python due to Pony ORM limitations
-        all_orders = Order.select()[:]
+        all_orders = list(Order.select())
         staff_orders = []
         for o in all_orders:
             if isinstance(o.user, Employee) and o.status in [OrderStatus.Pending, OrderStatus.In_Progress]:
@@ -1171,8 +1158,17 @@ class QueryManager:
     def get_top_3_pizzas_past_month() -> List[Dict[str, Any]]:
         """Get the top 3 pizzas sold in the past month by quantity."""
         past_month = datetime.now() - timedelta(days=30)
-        top_pizzas = select((p, sum(opr.quantity)) for p in Pizza
-                           for opr in p.order
-                           if opr.order.created_at >= past_month) \
-                           .order_by(-2)[:3]
-        return [{'pizza': p, 'total_quantity': qty} for p, qty in top_pizzas]
+        # Get all orders in the past month and aggregate pizza quantities
+        all_orders = list(Order.select(lambda o: o.created_at >= past_month))
+        pizza_sales = {}
+        
+        for order in all_orders:
+            for opr in order.pizza_relations:
+                pizza_id = opr.pizza.id
+                if pizza_id not in pizza_sales:
+                    pizza_sales[pizza_id] = {'pizza': opr.pizza, 'quantity': 0}
+                pizza_sales[pizza_id]['quantity'] += opr.quantity
+        
+        # Sort by quantity and get top 3
+        sorted_pizzas = sorted(pizza_sales.values(), key=lambda x: x['quantity'], reverse=True)[:3]
+        return [{'pizza': item['pizza'], 'total_quantity': item['quantity']} for item in sorted_pizzas]

@@ -2,6 +2,7 @@ from typing import List, Dict, Any, Optional
 from enum import Enum
 from pony.orm import db_session
 import logging
+import traceback
 
 from .models import (
     IngredientType, Pizza, Extra
@@ -54,37 +55,62 @@ class MenuView:
         Returns:
             List of pizzas with price and dietary information
         """
-        pizzas = list(Pizza.select())
+        try:
+            logger.debug(f"MenuView.get_pizzas_with_prices_and_filters called with filter: {dietary_filter}")
+            pizzas = list(Pizza.select())
+            logger.debug(f"Retrieved {len(pizzas)} pizzas from database")
 
-        # Apply dietary filtering
-        if dietary_filter == DietaryFilter.VEGAN:
-            pizzas = [p for p in pizzas if all(i.type == IngredientType.Vegan for i in p.ingredients)]
-        elif dietary_filter == DietaryFilter.VEGETARIAN:
-            pizzas = [p for p in pizzas if all(i.type in [IngredientType.Vegan, IngredientType.Vegetarian] for i in p.ingredients)]
+            # Apply dietary filtering
+            if dietary_filter == DietaryFilter.VEGAN:
+                logger.debug("Applying vegan filter")
+                pizzas = [p for p in pizzas if all(
+                    (i.type == IngredientType.Vegan if hasattr(i.type, 'value') else str(i.type) == 'Vegan')
+                    for i in p.ingredients)]
+            elif dietary_filter == DietaryFilter.VEGETARIAN:
+                logger.debug("Applying vegetarian filter")
+                pizzas = [p for p in pizzas if all(
+                    (i.type == IngredientType.Vegan if hasattr(i.type, 'value') else str(i.type) == 'Vegan') or
+                    (i.type == IngredientType.Vegetarian if hasattr(i.type, 'value') else str(i.type) == 'Vegetarian')
+                    for i in p.ingredients)]
 
-        result = []
-        for pizza in pizzas:
-            price = MenuView.calculate_pizza_price(pizza.id)
-            dietary_type = MenuView.get_pizza_dietary_type(pizza)
+            logger.debug(f"After filtering: {len(pizzas)} pizzas")
 
-            pizza_data = {
-                'id': pizza.id,
-                'name': pizza.name,
-                'description': pizza.description,
-                'price': round(price, 2),
-                'dietary_type': dietary_type.value,
-                'ingredients': [
-                    {
-                        'name': ing.name,
-                        'price': ing.price,
-                        'type': ing.type.value
-                    } for ing in pizza.ingredients
-                ],
-                'stock': pizza.stock
-            }
-            result.append(pizza_data)
+            result = []
+            for idx, pizza in enumerate(pizzas):
+                try:
+                    logger.debug(f"Processing pizza {idx+1}/{len(pizzas)}: {pizza.name} (id: {pizza.id})")
+                    price = MenuView.calculate_pizza_price(pizza.id)
+                    dietary_type = MenuView.get_pizza_dietary_type(pizza)
+                    
+                    logger.debug(f"Pizza {pizza.name}: price={price}, dietary_type={dietary_type}")
 
-        return result
+                    pizza_data = {
+                        'id': pizza.id,
+                        'name': pizza.name,
+                        'description': pizza.description,
+                        'price': round(price, 2),
+                        'dietary_type': dietary_type.value if hasattr(dietary_type, 'value') else str(dietary_type),
+                        'ingredients': [
+                            {
+                                'name': ing.name,
+                                'price': ing.price,
+                                'type': ing.type.value if hasattr(ing.type, 'value') else str(ing.type)
+                            } for ing in pizza.ingredients
+                        ],
+                        'stock': pizza.stock
+                    }
+                    result.append(pizza_data)
+                except Exception as e:
+                    logger.error(f"Error processing pizza {pizza.name} (id: {pizza.id}): {str(e)}")
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    raise
+
+            logger.debug(f"Returning {len(result)} pizzas with prices and filters")
+            return result
+        except Exception as e:
+            logger.error(f"Error in get_pizzas_with_prices_and_filters: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
 
     @staticmethod
     @db_session
@@ -95,19 +121,33 @@ class MenuView:
         Returns:
             List of extras with price information
         """
-        extras = list(Extra.select())
+        try:
+            logger.debug("MenuView.get_extras_with_prices called")
+            extras = list(Extra.select())
+            logger.debug(f"Retrieved {len(extras)} extras from database")
 
-        result = []
-        for extra in extras:
-            extra_data = {
-                'id': extra.id,
-                'name': extra.name,
-                'price': round(extra.price, 2),
-                'type': extra.type.value
-            }
-            result.append(extra_data)
+            result = []
+            for idx, extra in enumerate(extras):
+                try:
+                    logger.debug(f"Processing extra {idx+1}/{len(extras)}: {extra.name} (id: {extra.id})")
+                    extra_data = {
+                        'id': extra.id,
+                        'name': extra.name,
+                        'price': round(extra.price, 2),
+                        'type': extra.type.value if hasattr(extra.type, 'value') else str(extra.type)
+                    }
+                    result.append(extra_data)
+                except Exception as e:
+                    logger.error(f"Error processing extra {extra.name} (id: {extra.id}): {str(e)}")
+                    logger.error(f"Extra data: id={extra.id}, name={extra.name}, price={extra.price}, type={extra.type}")
+                    raise
 
-        return result
+            logger.debug(f"Returning {len(result)} extras with prices")
+            return result
+        except Exception as e:
+            logger.error(f"Error in get_extras_with_prices: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
 
     @staticmethod
     @db_session
@@ -144,9 +184,14 @@ class MenuView:
         """
         ingredient_types = [ing.type for ing in pizza.ingredients]
 
-        if all(t == IngredientType.Vegan for t in ingredient_types):
+        # Convert all types to strings for comparison
+        ingredient_type_strings = [
+            t.value if hasattr(t, 'value') else str(t) for t in ingredient_types
+        ]
+
+        if all(t == 'Vegan' for t in ingredient_type_strings):
             return IngredientType.Vegan
-        elif all(t in [IngredientType.Vegan, IngredientType.Vegetarian] for t in ingredient_types):
+        elif all(t in ['Vegan', 'Vegetarian'] for t in ingredient_type_strings):
             return IngredientType.Vegetarian
         else:
             return IngredientType.Normal
@@ -195,12 +240,12 @@ class MenuView:
                 'name': pizza.name,
                 'description': pizza.description,
                 'price': round(price, 2),
-                'dietary_type': dietary_type.value,
+                'dietary_type': dietary_type.value if hasattr(dietary_type, 'value') else str(dietary_type),
                 'ingredients': [
                     {
                         'name': ing.name,
                         'price': ing.price,
-                        'type': ing.type.value
+                        'type': ing.type.value if hasattr(ing.type, 'value') else str(ing.type)
                     } for ing in pizza.ingredients
                 ],
                 'stock': pizza.stock

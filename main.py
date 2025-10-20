@@ -3,6 +3,7 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from src.database.db import init_db
 from src.router.auth import router as auth_router
 from src.router.secured import router as secured_router
@@ -52,6 +53,26 @@ async def log_requests(request, call_next):
     logger.debug(f"All response headers: {dict(response.headers)}")
     
     return response
+
+# Add global exception handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    """Global exception handler to catch all unhandled exceptions"""
+    logger.error(f"Unhandled exception: {str(exc)}")
+    logger.error(f"Error type: {type(exc).__name__}")
+    logger.error(f"Request URL: {request.url}")
+    logger.error(f"Request method: {request.method}")
+    import traceback
+    logger.error(f"Full traceback: {traceback.format_exc()}")
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Internal server error",
+            "error_type": type(exc).__name__,
+            "error_message": str(exc)
+        }
+    )
 
 # Initialize database
 logger.debug("Initializing database...")

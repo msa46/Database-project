@@ -127,6 +127,7 @@ class MultiplePizzaOrderResponse(BaseModel):
 async def get_current_user_from_token(token: str = Depends(oauth2_scheme)):
     """Get current authenticated user from Authorization header token"""
     if not token:
+        logger.error("No token provided in request")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated. Missing access token.",
@@ -142,6 +143,7 @@ async def get_current_user_from_token(token: str = Depends(oauth2_scheme)):
         logger.debug(f"Token verified for user: {username}, user_id: {user_id}")
         
         if username is None:
+            logger.error("Token missing 'sub' claim")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid authentication credentials",
@@ -150,29 +152,55 @@ async def get_current_user_from_token(token: str = Depends(oauth2_scheme)):
             
         return {"username": username, "user_id": user_id}
     except jwt.ExpiredSignatureError:
+        logger.error("Token has expired")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    except jwt.InvalidTokenError:
+    except jwt.InvalidTokenError as e:
+        logger.error(f"Invalid token error: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    except Exception as e:
+        logger.error(f"Unexpected error in get_current_user_from_token: {str(e)}")
+        logger.error(f"Error type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication failed"
+        )
 
 # Authorization dependencies for different user types
 async def get_current_customer(current_user: dict = Depends(get_current_user_from_token)):
     """Ensure current user is a customer"""
-    with db_session:
-        user = Customer.get(username=current_user["username"])
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized. Customer access required."
-            )
-        return user
+    try:
+        logger.debug(f"Checking if user {current_user['username']} is a customer")
+        with db_session:
+            user = Customer.get(username=current_user["username"])
+            if not user:
+                logger.error(f"User {current_user['username']} not found in Customer table")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Not authorized. Customer access required."
+                )
+            logger.debug(f"User {current_user['username']} confirmed as customer")
+            return user
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get_current_customer: {str(e)}")
+        logger.error(f"Error type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to verify customer access"
+        )
 
 async def get_current_employee(current_user: dict = Depends(get_current_user_from_token)):
     """Ensure current user is an employee"""
@@ -231,7 +259,7 @@ async def get_secured_info(
                     email=user.email,
                     position=user.position,
                     salary=user.salary,
-                    status=user.status.value
+                    status=user.status
                 )
             elif isinstance(user, Employee):
                 return EmployeeSpecificResponse(
@@ -270,12 +298,16 @@ async def get_dashboard(
     """Get user dashboard based on user type"""
     try:
         logger.debug(f"Getting dashboard for user: {current_user['username']}")
+        logger.debug(f"Dashboard parameters - page: {page}, page_size: {page_size}, dietary_filter: {dietary_filter}, available_only: {available_only}")
+        
         with db_session:
             # Get the user from database
             # Fix: Use lambda function instead of generator expression for Pony ORM
+            logger.debug(f"Querying user with username: {current_user['username']}")
             user = User.get(username=current_user["username"])
-            logger.debug(f"Found user: {user}")
+            logger.debug(f"Found user: {user}, type: {type(user)}")
             if not user:
+                logger.error(f"User not found in database: {current_user['username']}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="User not found"
@@ -283,9 +315,11 @@ async def get_dashboard(
             
             # Check user type and return appropriate response
             if isinstance(user, Customer):
+                logger.debug(f"Processing customer dashboard for user: {user.username}")
                 # Get pizzas with prices for customers (with dietary filtering and availability)
                 try:
                     # Convert string parameter to DietaryFilter enum
+                    logger.debug(f"Converting dietary filter: {dietary_filter}")
                     if dietary_filter == "vegan":
                         filter_enum = DietaryFilter.VEGAN
                     elif dietary_filter == "vegetarian":
@@ -295,9 +329,13 @@ async def get_dashboard(
                     else:
                         filter_enum = DietaryFilter.ALL
 
+                    logger.debug(f"Using dietary filter enum: {filter_enum}, available_only: {available_only}")
+
                     # Choose appropriate method based on availability filter
                     if available_only:
+                        logger.debug("Calling MenuView.get_available_pizzas_with_prices()")
                         all_pizzas = MenuView.get_available_pizzas_with_prices()
+                        logger.debug(f"Retrieved {len(all_pizzas)} available pizzas")
                         # Apply dietary filter manually since get_available_pizzas_with_prices doesn't support filtering
                         if filter_enum != DietaryFilter.ALL:
                             # Filter the results based on dietary type
@@ -309,7 +347,9 @@ async def get_dashboard(
                                     if pizza_dietary_type == filter_enum:
                                         filtered_pizzas.append(pizza)
                             all_pizzas = filtered_pizzas
+                            logger.debug(f"After dietary filtering: {len(all_pizzas)} pizzas")
                     else:
+                        logger.debug("Calling MenuView.get_pizzas_with_prices_and_filters()")
                         all_pizzas = MenuView.get_pizzas_with_prices_and_filters(filter_enum)
 
                     logger.debug(f"Retrieved {len(all_pizzas)} pizzas with prices (filter: {dietary_filter}, available_only: {available_only})")
@@ -367,6 +407,7 @@ async def get_dashboard(
 
                 # Get extras (drinks & desserts) for customers
                 try:
+                    logger.debug("Calling MenuView.get_extras_with_prices()")
                     extras_data = MenuView.get_extras_with_prices()
                     logger.debug(f"Retrieved {len(extras_data)} extras")
 
@@ -374,7 +415,7 @@ async def get_dashboard(
                     extras_info_list = []
                     for extra in extras_data:
                         try:
-                            logger.debug(f"Processing extra: {extra['name']}")
+                            logger.debug(f"Processing extra: {extra['name']}, id: {extra.get('id')}, price: {extra.get('price')}, type: {extra.get('type')}")
                             extra_info = ExtraInfo(
                                 id=extra['id'],
                                 name=extra['name'],
@@ -384,9 +425,11 @@ async def get_dashboard(
                             extras_info_list.append(extra_info)
                         except Exception as e:
                             logger.error(f"Error processing extra {extra}: {str(e)}")
+                            logger.error(f"Extra data: {extra}")
                             raise
                 except Exception as e:
                     logger.error(f"Error in extras processing: {str(e)}")
+                    logger.error(f"Traceback: {traceback.format_exc()}")
                     raise
 
                 return CustomerSpecificResponse(
@@ -404,7 +447,9 @@ async def get_dashboard(
             
             elif isinstance(user, Employee):
                 # Get all customers for employees
-                customers = Customer.select()[:]
+                logger.debug("Getting all customers for employee dashboard")
+                customers = list(Customer.select())
+                logger.debug(f"Retrieved {len(customers)} customers")
                 customer_info_list = [
                     CustomerInfo(
                         id=customer.id,
@@ -430,7 +475,7 @@ async def get_dashboard(
                 order_info_list = [
                     OrderInfo(
                         id=order.id,
-                        status=order.status.value,
+                        status=order.status,
                         created_at=order.created_at.isoformat() if order.created_at else "",
                         postal_code=order.postalCode
                     ) for order in orders
@@ -444,7 +489,7 @@ async def get_dashboard(
                     email=user.email,
                     position=user.position,
                     salary=user.salary,
-                    status=user.status.value,
+                    status=user.status,
                     orders=order_info_list
                 )
             
@@ -503,7 +548,7 @@ async def get_delivery_person_info(
             email=delivery_person.email,
             position=delivery_person.position,
             salary=delivery_person.salary,
-            status=delivery_person.status.value
+            status=delivery_person.status
         )
     except HTTPException:
         raise
@@ -540,14 +585,24 @@ async def get_pizzas_paginated(
         pizzas_data = QueryManager.get_pizzas_paginated(page=page, page_size=page_size)
         
         # Convert pizzas to PizzaInfo objects
-        pizza_info_list = [
-            PizzaInfo(
+        pizza_info_list = []
+        for pizza in pizzas_data["pizzas"]:
+            # Calculate pizza price using QueryManager
+            price = QueryManager.calculate_pizza_price(pizza.id)
+            
+            # Get dietary type (default to normal for now)
+            dietary_type = "normal"
+            
+            pizza_info = PizzaInfo(
                 id=pizza.id,
                 name=pizza.name,
                 description=pizza.description if hasattr(pizza, 'description') else None,
-                stock=pizza.stock
-            ) for pizza in pizzas_data["pizzas"]
-        ]
+                price=price,
+                dietary_type=dietary_type,
+                stock=pizza.stock,
+                ingredients=[]  # Empty ingredients list for now
+            )
+            pizza_info_list.append(pizza_info)
         
         # Create pagination info
         pagination_info = PaginationInfo(**pizzas_data["pagination"])
@@ -611,7 +666,7 @@ async def order_multiple_pizzas(
             # Create response
             response = MultiplePizzaOrderResponse(
                 order_id=order.id,
-                status=order.status.value,
+                status=order.status,
                 message="Order created successfully",
                 total_price=order_details["total_price"],
                 items=[
@@ -626,7 +681,7 @@ async def order_multiple_pizzas(
                 discount=(
                     DiscountInfo(
                         code=order_details["discount"]["code"],
-                        percentage=order_details["discount"]["percentage"],
+                        percentage=order_details["discount"].get("percentage", 0.0),
                         amount=order_details["discount"]["amount"]
                     ) if order_details["discount"] else None
                 ),
@@ -670,6 +725,122 @@ async def order_multiple_pizzas(
     except Exception as e:
         # Handle unexpected errors
         logger.error(f"Unexpected error in order_multiple_pizzas: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create order due to an internal error"
+        )
+
+@router.post("/order-pizza-with-extras", response_model=MultiplePizzaOrderResponse, status_code=status.HTTP_201_CREATED)
+async def order_pizza_with_extras(
+    request: MultiplePizzaOrderRequest,
+    customer: Customer = Depends(get_current_customer)
+):
+    """
+    Create an order with multiple pizzas and extras using the latest ordering function.
+    This endpoint uses the most recent create_multiple_pizza_order function which includes:
+    - Stock validation
+    - Automatic delivery person assignment
+    - Support for discount codes
+    - Proper transaction management
+    """
+    try:
+        logger.debug(f"Customer {customer.username} ordering pizza with extras using latest function")
+        logger.debug(f"Request data: {request}")
+        
+        # Validate pizza quantities
+        if not request.pizza_quantities:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least one pizza must be ordered"
+            )
+        
+        # Convert PizzaQuantity objects to [pizza_id, quantity] pairs for QueryManager
+        pizza_quantities_list = [[pq.pizza_id, pq.quantity] for pq in request.pizza_quantities]
+        
+        with db_session:
+            # Create the order using the latest QueryManager function
+            order = QueryManager.create_multiple_pizza_order(
+                user_id=customer.id,
+                pizza_quantities=pizza_quantities_list,
+                extra_ids=request.extra_ids,
+                discount_code=request.discount_code,
+                postal_code=request.postal_code
+            )
+            
+            logger.info(f"Successfully created order {order.id} for customer {customer.username} using latest function")
+            
+            # Get order confirmation details
+            order_details = QueryManager.get_order_confirmation(order.id)
+            if not order_details:
+                # This shouldn't happen if the order was just created
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to retrieve order confirmation"
+                )
+            
+            # Create response
+            response = MultiplePizzaOrderResponse(
+                order_id=order.id,
+                status=order.status,
+                message="Order created successfully using latest ordering function",
+                total_price=order_details["total_price"],
+                items=[
+                    OrderItemInfo(
+                        type=item["type"],
+                        name=item["name"],
+                        quantity=item["quantity"],
+                        unit_price=item["unit_price"],
+                        subtotal=item["subtotal"]
+                    ) for item in order_details["items"]
+                ],
+                discount=(
+                    DiscountInfo(
+                        code=order_details["discount"]["code"],
+                        percentage=order_details["discount"].get("percentage", 0.0),
+                        amount=order_details["discount"]["amount"]
+                    ) if order_details["discount"] else None
+                ),
+                created_at=order.created_at.isoformat() if order.created_at else "",
+                postal_code=order.postalCode
+            )
+            
+            logger.debug(f"Created response for order {order.id} using latest function")
+            return response
+            
+    except ValueError as e:
+        # Handle specific validation errors from QueryManager
+        error_message = str(e)
+        status_code = status.HTTP_400_BAD_REQUEST
+        
+        # Check for specific error types to return appropriate status codes
+        if "not found" in error_message.lower():
+            if "pizza" in error_message.lower():
+                status_code = status.HTTP_404_NOT_FOUND
+            elif "extra" in error_message.lower():
+                status_code = status.HTTP_404_NOT_FOUND
+            elif "user" in error_message.lower():
+                status_code = status.HTTP_401_UNAUTHORIZED
+        elif "insufficient stock" in error_message.lower():
+            status_code = status.HTTP_400_BAD_REQUEST
+        elif "must be positive" in error_message.lower():
+            status_code = status.HTTP_400_BAD_REQUEST
+        elif "postal code" in error_message.lower():
+            status_code = status.HTTP_400_BAD_REQUEST
+            
+        logger.error(f"Validation error in order_pizza_with_extras: {error_message}")
+        raise HTTPException(
+            status_code=status_code,
+            detail=error_message
+        )
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+        
+    except Exception as e:
+        # Handle unexpected errors
+        logger.error(f"Unexpected error in order_pizza_with_extras: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

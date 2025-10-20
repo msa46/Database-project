@@ -351,52 +351,107 @@ class OrderManager(BaseManager):
     """Handles order creation."""
     
     @staticmethod
-    def create(user: User, status: OrderStatus = OrderStatus.Pending, 
-              pizzas: Optional[List[Dict[str, Any]]] = None,
-              extras: Optional[List[Extra]] = None,
-              delivery_person: Optional[DeliveryPerson] = None,
-              postalCode: Optional[str] = None) -> Order:
-        order_data = {
-            'user': user,
-            'status': status,
-            'postalCode': postalCode or user.postalCode or "0000AA"
-        }
-        
-        if delivery_person:
-            order_data['delivery_person'] = delivery_person
-            
-        order = BaseManager.create_entity(Order, **order_data)
-        
-        if pizzas:
-            for pizza_data in pizzas:
-                pizza = pizza_data['pizza']
-                quantity = pizza_data.get('quantity', 1)
-                OrderPizzaRelation(order=order, pizza=pizza, quantity=quantity)
-        
-        if extras:
-            for extra in extras:
-                order.extras.add(extra)
-                
-        return order
+    @db_session
+    def create(user: User, status: OrderStatus = OrderStatus.Pending,
+               pizzas: Optional[List[Dict[str, Any]]] = None,
+               extras: Optional[List[Extra]] = None,
+               delivery_person: Optional[DeliveryPerson] = None,
+               postalCode: Optional[str] = None) -> Order:
+        """Create an order with proper transaction management."""
+        try:
+            logger.debug(f"Starting transaction for order creation for user: {user.username}")
+
+            # Validate input parameters
+            if not user:
+                raise ValueError("User is required for order creation")
+
+            if not pizzas:
+                raise ValueError("At least one pizza is required")
+
+            order_data = {
+                'user': user,
+                'status': status,
+                'postalCode': postalCode or user.postalCode or "0000AA"
+            }
+
+            if delivery_person:
+                order_data['delivery_person'] = delivery_person
+
+            # Create the main order entity
+            logger.debug("Creating order entity")
+            order = BaseManager.create_entity(Order, **order_data)
+
+            # Add pizzas with quantities within the same transaction
+            if pizzas:
+                logger.debug(f"Adding {len(pizzas)} pizzas to order")
+                for pizza_data in pizzas:
+                    pizza = pizza_data['pizza']
+                    quantity = pizza_data.get('quantity', 1)
+
+                    if not pizza:
+                        raise ValueError("Pizza object is required in pizza data")
+                    if quantity < 1:
+                        raise ValueError("Pizza quantity must be at least 1")
+
+                    # Create OrderPizzaRelation within the transaction
+                    OrderPizzaRelation(order=order, pizza=pizza, quantity=quantity)
+
+            # Add extras within the same transaction
+            if extras:
+                logger.debug(f"Adding {len(extras)} extras to order")
+                for extra in extras:
+                    if not extra:
+                        raise ValueError("Extra object cannot be None")
+                    order.extras.add(extra)
+
+            # Commit the transaction
+            logger.debug("Committing order creation transaction")
+            commit()
+
+            logger.info(f"Order created successfully with ID: {order.id} for user: {user.username}")
+            return order
+
+        except Exception as e:
+            logger.error(f"Error creating order for user {user.username}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # Transaction will be automatically rolled back if commit() wasn't called
+            raise
     
     @staticmethod
+    @db_session
     def create_batch(orders_data: List[Dict[str, Any]]) -> List[Order]:
+        """Create multiple orders with proper transaction management."""
         orders = []
-        for order_data in orders_data:
-            user = order_data.pop('user')
-            pizzas = order_data.pop('pizzas', None)
-            extras = order_data.pop('extras', None)
-            delivery_person = order_data.pop('delivery_person', None)
-            
-            order = OrderManager.create(
-                user=user,
-                pizzas=pizzas,
-                extras=extras,
-                delivery_person=delivery_person,
-                **order_data
-            )
-            orders.append(order)
-        return orders
+        try:
+            logger.debug(f"Starting batch transaction for {len(orders_data)} orders")
+
+            for order_data in orders_data:
+                user = order_data.pop('user')
+                pizzas = order_data.pop('pizzas', None)
+                extras = order_data.pop('extras', None)
+                delivery_person = order_data.pop('delivery_person', None)
+
+                order = OrderManager.create(
+                    user=user,
+                    pizzas=pizzas,
+                    extras=extras,
+                    delivery_person=delivery_person,
+                    **order_data
+                )
+                orders.append(order)
+
+            # Commit all orders in a single transaction
+            logger.debug("Committing batch order creation transaction")
+            commit()
+
+            logger.info(f"Successfully created {len(orders)} orders in batch")
+            return orders
+
+        except Exception as e:
+            logger.error(f"Error in batch order creation: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # Transaction will be automatically rolled back if commit() wasn't called
+            raise
 
 
 class DiscountCodeManager(BaseManager):

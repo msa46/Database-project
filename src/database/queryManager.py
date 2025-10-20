@@ -3,6 +3,8 @@ from typing import List, Dict, Any, Optional
 from pony.orm import db_session, select, desc, count, avg, commit
 import re
 import secrets
+import logging
+import traceback
 import random
 
 from .models import (
@@ -11,6 +13,8 @@ from .models import (
     Customer, Employee, DeliveryPerson, Order, DiscountCode
 )
 
+# Configure logging
+logger = logging.getLogger(__name__)
 
 class QueryManager:
     """Query manager with examples for ExtraType."""
@@ -118,6 +122,15 @@ class QueryManager:
             if pizza.ingredients and all(i.type in [IngredientType.Vegan, IngredientType.Vegetarian] for i in list(pizza.ingredients)):
                 vegetarian_pizzas.append(pizza)
         return vegetarian_pizzas
+
+    @staticmethod
+    @db_session
+    def get_pizza_ingredients(pizza_id: int) -> List[Ingredient]:
+        """Get all ingredients for a specific pizza by pizza ID."""
+        pizza = Pizza.get(id=pizza_id)
+        if not pizza:
+            raise ValueError(f"Pizza with id {pizza_id} not found")
+        return list(pizza.ingredients)
 
     @staticmethod
     @db_session
@@ -325,7 +338,6 @@ class QueryManager:
             return []
         return list(user.orders)
     
-#TODO: implement discount capability
     @staticmethod
     @db_session
     def create_order(
@@ -339,144 +351,281 @@ class QueryManager:
                      delivery_person_id: Optional[int] = None,
                      postal_code: Optional[str] = None
                      ) -> Order:
-        """Create a new order with at least one pizza and optional extras, by user ID, with optional discount code and additional order details.
-        pizza_quantities should be a list of [pizza_id, quantity] pairs.
-        """
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"Creating order for user_id: {user_id}")
-        
-        user = User.get(id=user_id)
-        if not user:
-            raise ValueError(f"User with id {user_id} not found")
-        
-        logger.info(f"User found: {user.username}")
+        """Create a new order with proper transaction management and at least one pizza and optional extras."""
+        try:
+            logger.debug(f"Starting transaction for order creation - user_id: {user_id}")
 
-        # Determine postal code
-        final_postal_code = postal_code or user.postalCode
-        if not final_postal_code:
-            raise ValueError("Postal code must be provided or set on the user")
+            # Validate input parameters
+            if not user_id:
+                raise ValueError("User ID is required")
 
-        # Determine created_at
-        final_created_at = created_at or datetime.now()
+            if not pizza_quantities or len(pizza_quantities) == 0:
+                raise ValueError("At least one pizza is required")
 
-        # Get delivery person if provided, or automatically assign one
-        delivery_person = None
-        if delivery_person_id:
-            delivery_person = DeliveryPerson.get(id=delivery_person_id)
-            if not delivery_person:
-                raise ValueError(f"Delivery person with id {delivery_person_id} not found")
-        else:
-            # Try to find an available delivery person first
-            logger.info("Looking for available delivery persons")
-            available_dps = QueryManager.get_available_delivery_persons()
-            logger.info(f"Found {len(available_dps) if available_dps else 0} available delivery persons")
-            if available_dps:
-                delivery_person = available_dps[0]
-                logger.info(f"Selected delivery person: {delivery_person.username}")
-                # Note: We don't update the status here since the order is just being created
-                # The status will be updated when the order moves to In_Progress
-            else:
-                # If no available delivery persons, randomly assign one
-                logger.info("No available delivery persons, selecting random one")
-                delivery_person = QueryManager.get_random_delivery_person()
-                if delivery_person:
-                    logger.info(f"Selected random delivery person: {delivery_person.username}")
+            # Get user
+            user = User.get(id=user_id)
+            if not user:
+                raise ValueError(f"User with id {user_id} not found")
 
-        if not pizza_quantities:
-            raise ValueError("At least one pizza is required")
+            # Determine postal code
+            final_postal_code = postal_code or user.postalCode
+            if not final_postal_code:
+                raise ValueError("Postal code must be provided or set on the user")
 
-        # Collect all pizza and extra IDs for batch fetching
-        pizza_ids = [item[0] for item in pizza_quantities]
-        extra_ids_set = set(extra_ids) if extra_ids else set()
+            # Determine created_at
+            final_created_at = created_at or datetime.now()
 
-        # Fetch all pizzas and extras in single queries
-        logger.info(f"Fetching pizzas with IDs: {pizza_ids}")
-        pizzas = Pizza.select(lambda p: p.id in pizza_ids)[:] if pizza_ids else []
-        logger.info(f"Found {len(pizzas)} pizzas")
-        
-        logger.info(f"Fetching extras with IDs: {extra_ids_set}")
-        extras = Extra.select(lambda e: e.id in extra_ids_set)[:] if extra_ids_set else []
-        logger.info(f"Found {len(extras)} extras")
-        
-        # Create dictionaries for O(1) lookups
-        logger.info("Creating pizza dictionary")
-        pizza_dict = {p.id: p for p in list(pizzas)}
-        logger.info("Pizza dictionary created")
-        
-        logger.info("Creating extra dictionary")
-        extra_dict = {e.id: e for e in list(extras)}
-        logger.info("Extra dictionary created")
+            # Get delivery person if provided
+            delivery_person = None
+            if delivery_person_id:
+                delivery_person = DeliveryPerson.get(id=delivery_person_id)
+                if not delivery_person:
+                    raise ValueError(f"Delivery person with id {delivery_person_id} not found")
 
-        # Create the order
-        logger.info("Creating order object")
-        order = Order(
-            user=user,
-            status=status,
-            postalCode=final_postal_code,
-            created_at=final_created_at,
-            delivered_at=delivered_at,
-            delivery_person=delivery_person
-        )
-        logger.info("Order object created")
+            # Collect all pizza and extra IDs for batch fetching
+            pizza_ids = [item[0] for item in pizza_quantities]
+            extra_ids_set = set(extra_ids) if extra_ids else set()
 
-        # Add pizzas with quantities using dictionary lookup
-        logger.info("Adding pizzas to order")
-        for item in pizza_quantities:
-            pizza_id, quantity = item
-            pizza = pizza_dict.get(pizza_id)
-            if not pizza:
-                raise ValueError(f"Pizza with id {pizza_id} not found")
-            OrderPizzaRelation(order=order, pizza=pizza, quantity=quantity)
-        logger.info("Pizzas added to order")
+            # Fetch all pizzas and extras in single queries
+            pizzas = Pizza.select(p for p in Pizza if p.id in pizza_ids) if pizza_ids else []
+            extras = Extra.select(e for e in Extra if e.id in extra_ids_set) if extra_ids_set else []
 
-        # Add extras if provided using dictionary lookup
-        if extra_ids:
-            logger.info("Adding extras to order")
-            for extra_id in extra_ids:
-                extra = extra_dict.get(extra_id)
-                if not extra:
-                    raise ValueError(f"Extra with id {extra_id} not found")
-                order.extras.add(extra)
-            logger.info("Extras added to order")
+            # Create dictionaries for O(1) lookups
+            pizza_dict = {p.id: p for p in pizzas}
+            extra_dict = {e.id: e for e in extras}
 
-#TODO: Add discount code validation (check existence, validity period, usage)
-        logger.info("Committing order to database")
-        commit()
-        logger.info("Order committed successfully")
-        return order
+            # Validate all pizzas exist before creating order
+            for pizza_id, quantity in pizza_quantities:
+                if pizza_id not in pizza_dict:
+                    raise ValueError(f"Pizza with id {pizza_id} not found")
+                if quantity < 1:
+                    raise ValueError(f"Invalid quantity {quantity} for pizza {pizza_id}. Must be at least 1")
+
+            # Validate all extras exist before creating order
+            if extra_ids:
+                for extra_id in extra_ids:
+                    if extra_id not in extra_dict:
+                        raise ValueError(f"Extra with id {extra_id} not found")
+
+            # Create the order
+            logger.debug("Creating order entity within transaction")
+            order = Order(
+                user=user,
+                status=status,
+                postalCode=final_postal_code,
+                created_at=final_created_at,
+                delivered_at=delivered_at,
+                delivery_person=delivery_person
+            )
+
+            # Add pizzas with quantities using dictionary lookup within transaction
+            logger.debug(f"Adding {len(pizza_quantities)} pizzas to order")
+            for item in pizza_quantities:
+                pizza_id, quantity = item
+                pizza = pizza_dict.get(pizza_id)
+                OrderPizzaRelation(order=order, pizza=pizza, quantity=quantity)
+
+            # Add extras if provided using dictionary lookup within transaction
+            if extra_ids:
+                logger.debug(f"Adding {len(extra_ids)} extras to order")
+                for extra_id in extra_ids:
+                    extra = extra_dict.get(extra_id)
+                    order.extras.add(extra)
+
+            # Calculate total order amount before applying discount
+            total = 0.0
+
+            # Calculate pizza costs
+            for item in pizza_quantities:
+                pizza_id, quantity = item
+                pizza = pizza_dict.get(pizza_id)
+                unit_price = QueryManager.calculate_pizza_price(pizza.id)
+                total += unit_price * quantity
+
+            # Calculate extra costs
+            if extra_ids:
+                for extra_id in extra_ids:
+                    extra = extra_dict.get(extra_id)
+                    total += extra.price
+
+            # Apply discount code if provided
+            discount_amount = 0.0
+            discount_info = None
+
+            if discount_code:
+                logger.debug(f"Processing discount code: {discount_code}")
+                # Get discount code details using existing query
+                dc_details = QueryManager.get_discount_code_details(discount_code)
+
+                if not dc_details or not dc_details.get('is_valid'):
+                    raise ValueError(f"Invalid or expired discount code: {discount_code}")
+
+                dc = DiscountCode.get(code=discount_code)
+                if not dc:
+                    raise ValueError(f"Discount code not found: {discount_code}")
+
+                # Apply discount based on type
+                if dc.percentage == 0.0:
+                    # Birthday code: 1 free cheapest pizza + 1 free drink
+                    logger.debug("Applying birthday discount (free cheapest pizza + 1 free drink)")
+
+                    # Find cheapest pizza in order
+                    cheapest_pizza = None
+                    cheapest_price = float('inf')
+
+                    for opr in order.Pizzas:
+                        pizza_price = QueryManager.calculate_pizza_price(opr.pizza.id)
+                        if pizza_price < cheapest_price:
+                            cheapest_price = pizza_price
+                            cheapest_pizza = opr
+
+                    # Find free drink (cheapest available drink extra)
+                    free_drink = None
+                    drink_price = float('inf')
+
+                    for extra in order.extras:
+                        if extra.type == ExtraType.Drink and extra.price < drink_price:
+                            drink_price = extra.price
+                            free_drink = extra
+
+                    # Apply discounts
+                    if cheapest_pizza:
+                        discount_amount += cheapest_price
+                        logger.debug(f"Applied free pizza discount: {cheapest_price}")
+
+                    if free_drink:
+                        discount_amount += free_drink.price
+                        logger.debug(f"Applied free drink discount: {free_drink.price}")
+
+                    discount_info = {
+                        'code': dc.code,
+                        'type': 'birthday',
+                        'description': '1 free pizza (cheapest) and 1 free drink',
+                        'amount': round(discount_amount, 2)
+                    }
+
+                else:
+                    # Percentage-based discount
+                    logger.debug(f"Applying percentage discount: {dc.percentage}%")
+                    discount_amount = total * (dc.percentage / 100)
+                    discount_info = {
+                        'code': dc.code,
+                        'type': 'loyalty',
+                        'percentage': dc.percentage,
+                        'amount': round(discount_amount, 2)
+                    }
+
+                # Mark discount code as used if it's a one-time use
+                if dc.percentage == 0.0:  # Birthday codes are one-time use
+                    dc.used = True
+                    dc.used_by = user
+
+            # Commit the transaction
+            logger.debug("Committing order creation transaction")
+            commit()
+
+            logger.info(f"Order created successfully with ID: {order.id} for user: {user.username}")
+            return order
+
+        except Exception as e:
+            logger.error(f"Error creating order for user_id {user_id}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # Transaction will be automatically rolled back if commit() wasn't called
+            raise
 
     @staticmethod
     @db_session
-    def update_order(order_id: int, 
-                     status: Optional[OrderStatus] = None, 
-                     delivered_at: Optional[datetime] = None, 
-                     delivery_person_id: Optional[int] = None, 
+    def update_order(order_id: int,
+                     status: Optional[OrderStatus] = None,
+                     delivered_at: Optional[datetime] = None,
+                     delivery_person_id: Optional[int] = None,
                      postal_code: Optional[str] = None
                      ) -> Order:
-        """Update an existing order's details such as status, delivery time, delivery person, or postal code."""
-        order = Order.get(id=order_id)
-        if not order:
-            raise ValueError(f"Order with id {order_id} not found")
+        """Update an existing order's details with proper transaction management."""
+        try:
+            logger.debug(f"Starting transaction for order update - order_id: {order_id}")
 
-        if status is not None:
-            order.status = status
-            # Automatically set delivered_at if status is Delivered and not set
-            if status == OrderStatus.Delivered and order.delivered_at is None:
-                order.delivered_at = datetime.now()
+            # Validate input parameters
+            if not order_id:
+                raise ValueError("Order ID is required")
 
-        if delivered_at is not None:
-            order.delivered_at = delivered_at
+            # Get and validate order exists
+            order = Order.get(id=order_id)
+            if not order:
+                raise ValueError(f"Order with id {order_id} not found")
 
-        if delivery_person_id is not None:
-            delivery_person = DeliveryPerson.get(id=delivery_person_id)
-            if not delivery_person:
-                raise ValueError(f"Delivery person with id {delivery_person_id} not found")
-            order.delivery_person = delivery_person
+            # Validate delivery person if provided
+            if delivery_person_id is not None:
+                delivery_person = DeliveryPerson.get(id=delivery_person_id)
+                if not delivery_person:
+                    raise ValueError(f"Delivery person with id {delivery_person_id} not found")
 
-        if postal_code is not None:
-            order.postalCode = postal_code
+            # Update order fields within transaction
+            logger.debug("Updating order fields within transaction")
+            if status is not None:
+                order.status = status
+                # Automatically set delivered_at if status is Delivered and not set
+                if status == OrderStatus.Delivered and order.delivered_at is None:
+                    order.delivered_at = datetime.now()
 
+            if delivered_at is not None:
+                order.delivered_at = delivered_at
+
+            if delivery_person_id is not None:
+                delivery_person = DeliveryPerson.get(id=delivery_person_id)
+                order.delivery_person = delivery_person
+
+            if postal_code is not None:
+                if not postal_code.strip():
+                    raise ValueError("Postal code cannot be empty")
+                order.postalCode = postal_code
+
+            # Commit the transaction
+            logger.debug("Committing order update transaction")
+            commit()
+
+            logger.info(f"Order {order_id} updated successfully")
+            return order
+
+        except Exception as e:
+            logger.error(f"Error updating order {order_id}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # Transaction will be automatically rolled back if commit() wasn't called
+            raise
+    
+    @staticmethod
+    @db_session
+    def delete_order(order_id: int) -> bool:
+        """Delete an order from the database with proper transaction management."""
+        try:
+            logger.debug(f"Starting transaction for order deletion - order_id: {order_id}")
+
+            # Validate input parameters
+            if not order_id:
+                raise ValueError("Order ID is required")
+
+            # Get and validate order exists
+            order = Order.get(id=order_id)
+            if not order:
+                logger.warning(f"Order with id {order_id} not found for deletion")
+                return False
+
+            # Delete the order (this will cascade to OrderPizzaRelation and extras relationships)
+            logger.debug("Deleting order within transaction")
+            order.delete()
+
+            # Commit the transaction
+            logger.debug("Committing order deletion transaction")
+            commit()
+
+            logger.info(f"Order {order_id} deleted successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error deleting order {order_id}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # Transaction will be automatically rolled back if commit() wasn't called
+            raise
         commit()
         return order
     
@@ -491,7 +640,6 @@ class QueryManager:
         commit()
         return True
     
-#TODO: implement/adjust discount capability
     @staticmethod
     @db_session
     def get_order_confirmation(order_id: int) -> Optional[Dict[str, Any]]:
@@ -527,18 +675,49 @@ class QueryManager:
                 'subtotal': round(extra.price, 2)
             })
             
-#TODO: Check discount logic and possibly move this to a subquery in the loyalty section
         # Apply discount if applicable
         discount_info = None
         if order.user.discount_code:
             dc = order.user.discount_code
-            discount_amount = total * (dc.percentage / 100)
-            total -= discount_amount
-            discount_info = {
-                'code': dc.code,
-                'percentage': dc.percentage,
-                'amount': round(discount_amount, 2)
-            }
+
+            if dc.percentage == 0.0:
+                # Birthday code: 1 free cheapest pizza + 1 free drink
+                discount_amount = 0.0
+
+                # Find cheapest pizza in order
+                cheapest_pizza_price = float('inf')
+                for opr in order.Pizzas:
+                    pizza_price = QueryManager.calculate_pizza_price(opr.pizza.id)
+                    cheapest_pizza_price = min(cheapest_pizza_price, pizza_price)
+
+                # Find cheapest drink in order
+                cheapest_drink_price = float('inf')
+                for extra in order.extras:
+                    if extra.type == ExtraType.Drink:
+                        cheapest_drink_price = min(cheapest_drink_price, extra.price)
+
+                # Apply discounts
+                if cheapest_pizza_price != float('inf'):
+                    discount_amount += cheapest_pizza_price
+                if cheapest_drink_price != float('inf'):
+                    discount_amount += cheapest_drink_price
+
+                discount_info = {
+                    'code': dc.code,
+                    'type': 'birthday',
+                    'description': '1 free pizza (cheapest) and 1 free drink',
+                    'amount': round(discount_amount, 2)
+                }
+
+            else:
+                # Percentage-based discount
+                discount_amount = total * (dc.percentage / 100)
+                discount_info = {
+                    'code': dc.code,
+                    'type': 'loyalty',
+                    'percentage': dc.percentage,
+                    'amount': round(discount_amount, 2)
+                }
 
         return {
             'total_price': round(total, 2),
@@ -551,37 +730,62 @@ class QueryManager:
     @staticmethod
     @db_session
     def process_loyalty_points(user_id: int) -> Optional[DiscountCode]:
-        """Process loyalty points after an order is completed.
+        """Process loyalty points after an order is completed with proper transaction management.
         Increments loyalty points for customers. If points reach 10,
         resets to 0 and creates a 10% discount code valid for 1 month."""
-        user = User.get(id=user_id)
-        if not user or not isinstance(user, Customer):
-            return None
+        try:
+            logger.debug(f"Starting transaction for loyalty points processing - user_id: {user_id}")
 
-        # Increment points
-        user.loyalty_points += 1
-        
-        # Check if points reached 10 after increment
-        if user.loyalty_points >= 10:
-            # Create discount code
-            now = datetime.now()
-            valid_until = now + timedelta(days=30)
-            code = secrets.token_hex(8).upper()
-            dc = DiscountCode(
-                code=code,
-                percentage=10.0,
-                valid_until=valid_until,
-                valid_from=now,
-                used=False
-            )
-            # Reset points to 0
-            user.loyalty_points = 0
+            # Validate input parameters
+            if not user_id:
+                raise ValueError("User ID is required")
+
+            # Get and validate user
+            user = User.get(id=user_id)
+            if not user:
+                raise ValueError(f"User with id {user_id} not found")
+
+            if not isinstance(user, Customer):
+                logger.info(f"User {user_id} is not a customer, skipping loyalty points processing")
+                return None
+
+            # Process loyalty points within transaction
+            logger.debug(f"Processing loyalty points for customer {user.username}")
+            user.loyalty_points += 1
+
+            discount_code = None
+            if user.loyalty_points >= 10:
+                logger.debug("Customer reached 10 loyalty points, creating discount code")
+                now = datetime.now()
+                valid_until = now + timedelta(days=30)
+                code = secrets.token_hex(8).upper()
+
+                dc = DiscountCode(
+                    code=code,
+                    percentage=10.0,
+                    valid_until=valid_until,
+                    valid_from=now,
+                    used=False
+                )
+                user.loyalty_points = 0
+                discount_code = dc
+
+            # Commit the transaction
+            logger.debug("Committing loyalty points processing transaction")
             commit()
-            return dc
-        
-        # Points are less than 10, just commit the increment
-        commit()
-        return None
+
+            if discount_code:
+                logger.info(f"Created discount code {code} for customer {user.username}")
+            else:
+                logger.info(f"Incremented loyalty points for customer {user.username}")
+
+            return discount_code
+
+        except Exception as e:
+            logger.error(f"Error processing loyalty points for user {user_id}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # Transaction will be automatically rolled back if commit() wasn't called
+            raise
 
 #PLEASE NOTE THAT: when precentage is 0.0, this means that its a birthday code. This would mean that you get 1 free pizza (cheapest) and 1 free drink
     @staticmethod
@@ -678,31 +882,53 @@ class QueryManager:
     @staticmethod
     @db_session
     def assign_delivery_person_to_order(order_id: int) -> Optional[Dict[str, Any]]:
-        """Assign an available delivery person to an order.
+        """Assign an available delivery person to an order with proper transaction management.
         Returns a dict with order_id and delivery_person_id if assignment was successful,
         None if no suitable delivery person found."""
-        order = Order.get(id=order_id)
-        if not order:
-            raise ValueError(f"Order with id {order_id} not found")
-        if order.delivery_person:
-            raise ValueError("Order already has a delivery person assigned")
-        if order.status != OrderStatus.In_Progress:
-            raise ValueError("Order must be in progress to assign delivery person")
+        try:
+            logger.debug(f"Starting transaction for delivery person assignment - order_id: {order_id}")
 
-        # Find available delivery persons using the dedicated query
-        available_dps = QueryManager.get_available_delivery_persons()
-        if not available_dps:
-            return None  # No available delivery person
+            # Validate input parameters
+            if not order_id:
+                raise ValueError("Order ID is required")
 
-        # Sort by ID to ensure consistent selection
-        available_dps.sort(key=lambda dp: dp.id)
-        
-        # Assign the first available delivery person
-        dp = available_dps[0]
-        order.delivery_person = dp
-        dp.status = DeliveryStatus.On_Delivery
-        commit()
-        return {'order_id': order_id, 'delivery_person_id': dp.id}
+            # Get and validate order exists
+            order = Order.get(id=order_id)
+            if not order:
+                raise ValueError(f"Order with id {order_id} not found")
+
+            # Validate order state for assignment
+            if order.delivery_person:
+                raise ValueError("Order already has a delivery person assigned")
+
+            if order.status != OrderStatus.In_Progress:
+                raise ValueError("Order must be in progress to assign delivery person")
+
+            # Find available delivery persons using the dedicated query
+            logger.debug("Finding available delivery persons")
+            available_dps = QueryManager.get_available_delivery_persons()
+            if not available_dps:
+                logger.info(f"No available delivery persons for order {order_id}")
+                return None  # No available delivery person
+
+            # Assign the first available delivery person within the same transaction
+            logger.debug(f"Assigning delivery person {available_dps[0].id} to order {order_id}")
+            dp = available_dps[0]
+            order.delivery_person = dp
+            dp.status = DeliveryStatus.On_Delivery
+
+            # Commit the transaction
+            logger.debug("Committing delivery person assignment transaction")
+            commit()
+
+            logger.info(f"Successfully assigned delivery person {dp.id} to order {order_id}")
+            return {'order_id': order_id, 'delivery_person_id': dp.id}
+
+        except Exception as e:
+            logger.error(f"Error assigning delivery person to order {order_id}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # Transaction will be automatically rolled back if commit() wasn't called
+            raise
     
     @staticmethod
     @db_session
@@ -940,27 +1166,13 @@ class QueryManager:
                 staff_orders.append(o)
         return staff_orders
     
-    #TODO: Check if this works as intended
     @staticmethod
     @db_session
     def get_top_3_pizzas_past_month() -> List[Dict[str, Any]]:
         """Get the top 3 pizzas sold in the past month by quantity."""
         past_month = datetime.now() - timedelta(days=30)
-        # Get all orders and filter in Python due to Pony ORM limitations
-        all_orders = Order.select()[:]
-        filtered_orders = []
-        for o in all_orders:
-            if o.created_at >= past_month:
-                filtered_orders.append(o)
-        pizza_quantities = {}
-        
-        for order in filtered_orders:
-            for opr in list(order.pizza_relations):
-                pizza_id = opr.pizza.id
-                if pizza_id not in pizza_quantities:
-                    pizza_quantities[pizza_id] = {'pizza': opr.pizza, 'quantity': 0}
-                pizza_quantities[pizza_id]['quantity'] += opr.quantity
-        
-        # Sort by quantity and get top 3
-        sorted_pizzas = sorted(pizza_quantities.values(), key=lambda x: x['quantity'], reverse=True)[:3]
-        return [{'pizza': item['pizza'], 'total_quantity': item['quantity']} for item in sorted_pizzas]
+        top_pizzas = select((p, sum(opr.quantity)) for p in Pizza
+                           for opr in p.order
+                           if opr.order.created_at >= past_month) \
+                           .order_by(-2)[:3]
+        return [{'pizza': p, 'total_quantity': qty} for p, qty in top_pizzas]

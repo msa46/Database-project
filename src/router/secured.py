@@ -10,6 +10,7 @@ import traceback
 
 from ..database.models import User, Customer, Employee, DeliveryPerson, Pizza, Order
 from ..database.queryManager import QueryManager
+from ..database.views import MenuView, DietaryFilter
 from .auth import verify_token, SECRET_KEY, ALGORITHM
 
 # Configure logging
@@ -265,32 +266,47 @@ async def get_dashboard(
             
             # Check user type and return appropriate response
             if isinstance(user, Customer):
-                # Get paginated pizzas for customers
+                # Get pizzas with prices for customers
                 try:
-                    pizzas_data = QueryManager.get_pizzas_paginated(page=page, page_size=page_size)
-                    logger.debug(f"Retrieved pizzas data: {pizzas_data}")
-                    
-                    # Convert pizzas to PizzaInfo objects
+                    all_pizzas = MenuView.get_pizzas_with_prices_and_filters(DietaryFilter.ALL)
+                    logger.debug(f"Retrieved {len(all_pizzas)} pizzas with prices")
+
+                    # Apply pagination to the results
+                    start_idx = (page - 1) * page_size
+                    end_idx = start_idx + page_size
+                    paginated_pizzas = all_pizzas[start_idx:end_idx]
+
+                    # Convert pizzas to PizzaInfo objects (now including price)
                     pizza_info_list = []
-                    for pizza in pizzas_data["pizzas"]:
+                    for pizza in paginated_pizzas:
                         try:
-                            logger.debug(f"Processing pizza: {pizza}")
+                            logger.debug(f"Processing pizza: {pizza['name']}")
                             pizza_info = PizzaInfo(
-                                id=pizza.id,
-                                name=pizza.name,
-                                description=pizza.description if hasattr(pizza, 'description') else None,
-                                stock=pizza.stock
+                                id=pizza['id'],
+                                name=pizza['name'],
+                                description=pizza.get('description'),
+                                stock=pizza['stock']
                             )
                             pizza_info_list.append(pizza_info)
                         except Exception as e:
                             logger.error(f"Error processing pizza {pizza}: {str(e)}")
                             raise
+
+                    # Create pagination info
+                    total_count = len(all_pizzas)
+                    total_pages = (total_count + page_size - 1) // page_size
+                    pagination_info = PaginationInfo(
+                        page=page,
+                        page_size=page_size,
+                        total_count=total_count,
+                        total_pages=total_pages,
+                        has_next=end_idx < total_count,
+                        has_prev=page > 1
+                    )
+
                 except Exception as e:
                     logger.error(f"Error in pizzas processing: {str(e)}")
                     raise
-                
-                # Create pagination info
-                pagination_info = PaginationInfo(**pizzas_data["pagination"])
                 
                 return CustomerSpecificResponse(
                     message="Customer dashboard",

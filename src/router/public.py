@@ -1212,3 +1212,42 @@ async def order_multiple_pizzas(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create order due to an internal error"
         )
+
+@router.post("/orders/{order_id}/assign-delivery", response_model=Dict[str, Any])
+async def assign_delivery_person_to_order(order_id: int):
+    """Assign an available delivery person to an order without authentication"""
+    try:
+        logger.debug(f"Assigning delivery person to order {order_id}")
+
+        # Use the queryManager function to assign delivery person
+        result = QueryManager.assign_delivery_person_to_order(order_id)
+
+        if not result:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No available delivery persons or order not found"
+            )
+
+        logger.info(f"Successfully assigned delivery person {result['delivery_person_id']} to order {order_id}")
+
+        return {
+            "message": "Delivery person assigned successfully",
+            "order_id": result["order_id"],
+            "delivery_person_id": result["delivery_person_id"]
+        }
+
+    except ValueError as e:
+        logger.error(f"Value error assigning delivery person to order {order_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error assigning delivery person to order {order_id}: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to assign delivery person to order"
+        )

@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from src.database.db import init_db
 from src.router.auth import router as auth_router
 from src.router.secured import router as secured_router
+from src.router.public import router as public_router
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -92,6 +93,10 @@ app.include_router(auth_router)
 # Include secured router
 logger.debug("Including secured router")
 app.include_router(secured_router)
+
+# Include public router
+logger.debug("Including public router")
+app.include_router(public_router)
 
 
 @app.get("/")

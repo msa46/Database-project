@@ -1,11 +1,12 @@
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from pony.orm import db_session
 import logging
 import traceback
 
-from ..database.models import ExtraType, IngredientType, DeliveryStatus, OrderStatus, DiscountCode
+from ..database.models import ExtraType, IngredientType, DeliveryStatus, OrderStatus, DiscountCode, User, Customer, Employee, DeliveryPerson, Pizza, Order
+from ..database.views import MenuView, DietaryFilter
 from ..database.queryManager import QueryManager
 
 # Configure logging
@@ -65,6 +66,99 @@ class TopPizzaInfo(BaseModel):
     pizza_id: int
     pizza_name: str
     total_quantity: int
+
+# Enhanced models for moved secured features
+class SecuredInfoResponse(BaseModel):
+    message: str
+    user_type: str
+    user_id: int
+    username: str
+    email: str
+
+class IngredientInfo(BaseModel):
+    name: str
+    price: float
+    type: str
+
+class PizzaInfo(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    price: float
+    dietary_type: str
+    stock: int
+    ingredients: List[IngredientInfo] = []
+
+class PaginationInfo(BaseModel):
+    page: int
+    page_size: int
+    total_count: int
+    total_pages: int
+    has_next: bool
+    has_prev: bool
+
+class PaginatedPizzaResponse(BaseModel):
+    pizzas: List[PizzaInfo]
+    pagination: PaginationInfo
+
+class CustomerInfo(BaseModel):
+    id: int
+    username: str
+    email: str
+
+class OrderInfo(BaseModel):
+    id: int
+    status: str
+    created_at: str
+    postal_code: str
+
+class CustomerSpecificResponse(SecuredInfoResponse):
+    loyalty_points: int
+    birthday_order: bool
+    available_pizzas: List[PizzaInfo] = []
+    pizza_pagination: Optional[PaginationInfo] = None
+    available_extras: List[ExtraInfo] = []
+
+class EmployeeSpecificResponse(SecuredInfoResponse):
+    position: str
+    salary: float
+    customers: List[CustomerInfo] = []
+
+class DeliveryPersonSpecificResponse(EmployeeSpecificResponse):
+    status: str
+    orders: List[OrderInfo] = []
+
+class PizzaQuantity(BaseModel):
+    pizza_id: int
+    quantity: int
+
+class MultiplePizzaOrderRequest(BaseModel):
+    pizza_quantities: List[PizzaQuantity]
+    extra_ids: Optional[List[int]] = None
+    discount_code: Optional[str] = None
+    postal_code: Optional[str] = None
+
+class OrderItemInfo(BaseModel):
+    type: str
+    name: str
+    quantity: int
+    unit_price: float
+    subtotal: float
+
+class DiscountInfo(BaseModel):
+    code: str
+    percentage: float
+    amount: float
+
+class MultiplePizzaOrderResponse(BaseModel):
+    order_id: int
+    status: str
+    message: str
+    total_price: float
+    items: List[OrderItemInfo]
+    discount: Optional[DiscountInfo] = None
+    created_at: str
+    postal_code: str
 
 # Menu endpoints
 @router.get("/pizzas", response_model=List[PizzaInfo])
@@ -592,4 +686,529 @@ async def get_undelivered_staff_orders():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve undelivered staff orders"
+        )
+
+# User info endpoints (moved from secured.py without authentication)
+@router.get("/info/{user_id}", response_model=Union[CustomerSpecificResponse, EmployeeSpecificResponse, DeliveryPersonSpecificResponse])
+async def get_user_info(user_id: int):
+    """Get user information based on user ID without authentication"""
+    try:
+        with db_session:
+            # Get the user from database
+            user = User.get(id=user_id)
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+
+            # Check user type and return appropriate response
+            if isinstance(user, Customer):
+                return CustomerSpecificResponse(
+                    message="Customer information",
+                    user_type="customer",
+                    user_id=user.id,
+                    username=user.username,
+                    email=user.email,
+                    loyalty_points=user.loyalty_points,
+                    birthday_order=user.birthday_order
+                )
+            elif isinstance(user, DeliveryPerson):
+                return DeliveryPersonSpecificResponse(
+                    message="Delivery person information",
+                    user_type="delivery_person",
+                    user_id=user.id,
+                    username=user.username,
+                    email=user.email,
+                    position=user.position,
+                    salary=user.salary,
+                    status=user.status
+                )
+            elif isinstance(user, Employee):
+                return EmployeeSpecificResponse(
+                    message="Employee information",
+                    user_type="employee",
+                    user_id=user.id,
+                    username=user.username,
+                    email=user.email,
+                    position=user.position,
+                    salary=user.salary
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Unknown user type"
+                )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get_user_info: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve user information"
+        )
+
+@router.get("/dashboard/{user_id}", response_model=Union[CustomerSpecificResponse, EmployeeSpecificResponse, DeliveryPersonSpecificResponse])
+async def get_user_dashboard(
+    user_id: int,
+    page: int = 1,
+    page_size: int = 10,
+    dietary_filter: str = "all",
+    available_only: bool = False
+):
+    """Get user dashboard based on user ID without authentication"""
+    try:
+        logger.debug(f"Getting dashboard for user ID: {user_id}")
+        logger.debug(f"Dashboard parameters - page: {page}, page_size: {page_size}, dietary_filter: {dietary_filter}, available_only: {available_only}")
+
+        with db_session:
+            # Get the user from database
+            user = User.get(id=user_id)
+            logger.debug(f"Found user: {user}, type: {type(user)}")
+            if not user:
+                logger.error(f"User not found in database: {user_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+
+            # Check user type and return appropriate response
+            if isinstance(user, Customer):
+                logger.debug(f"Processing customer dashboard for user: {user.username}")
+                # Get pizzas with prices for customers (with dietary filtering and availability)
+                try:
+                    # Convert string parameter to DietaryFilter enum
+                    logger.debug(f"Converting dietary filter: {dietary_filter}")
+                    if dietary_filter == "vegan":
+                        filter_enum = DietaryFilter.VEGAN
+                    elif dietary_filter == "vegetarian":
+                        filter_enum = DietaryFilter.VEGETARIAN
+                    elif dietary_filter == "normal":
+                        filter_enum = DietaryFilter.NORMAL
+                    else:
+                        filter_enum = DietaryFilter.ALL
+
+                    logger.debug(f"Using dietary filter enum: {filter_enum}, available_only: {available_only}")
+
+                    # Choose appropriate method based on availability filter
+                    if available_only:
+                        logger.debug("Calling MenuView.get_available_pizzas_with_prices()")
+                        all_pizzas = MenuView.get_available_pizzas_with_prices()
+                        logger.debug(f"Retrieved {len(all_pizzas)} available pizzas")
+                        # Apply dietary filter manually since get_available_pizzas_with_prices doesn't support filtering
+                        if filter_enum != DietaryFilter.ALL:
+                            # Filter the results based on dietary type
+                            filtered_pizzas = []
+                            for pizza in all_pizzas:
+                                pizza_entity = Pizza.get(id=pizza['id'])
+                                if pizza_entity:
+                                    pizza_dietary_type = MenuView.get_pizza_dietary_type(pizza_entity)
+                                    if pizza_dietary_type == filter_enum:
+                                        filtered_pizzas.append(pizza)
+                            all_pizzas = filtered_pizzas
+                            logger.debug(f"After dietary filtering: {len(all_pizzas)} pizzas")
+                    else:
+                        logger.debug("Calling MenuView.get_pizzas_with_prices_and_filters()")
+                        all_pizzas = MenuView.get_pizzas_with_prices_and_filters(filter_enum)
+
+                    logger.debug(f"Retrieved {len(all_pizzas)} pizzas with prices (filter: {dietary_filter}, available_only: {available_only})")
+
+                    # Apply pagination to the results
+                    start_idx = (page - 1) * page_size
+                    end_idx = start_idx + page_size
+                    paginated_pizzas = all_pizzas[start_idx:end_idx]
+
+                    # Convert pizzas to PizzaInfo objects (with full details)
+                    pizza_info_list = []
+                    for pizza in paginated_pizzas:
+                        try:
+                            logger.debug(f"Processing pizza: {pizza['name']}")
+
+                            # Convert ingredients to IngredientInfo objects
+                            ingredients_info = []
+                            for ing in pizza.get('ingredients', []):
+                                ingredient_info = IngredientInfo(
+                                    name=ing['name'],
+                                    price=ing['price'],
+                                    type=ing['type']
+                                )
+                                ingredients_info.append(ingredient_info)
+
+                            pizza_info = PizzaInfo(
+                                id=pizza['id'],
+                                name=pizza['name'],
+                                description=pizza.get('description'),
+                                price=pizza['price'],
+                                dietary_type=pizza['dietary_type'],
+                                stock=pizza['stock'],
+                                ingredients=ingredients_info
+                            )
+                            pizza_info_list.append(pizza_info)
+                        except Exception as e:
+                            logger.error(f"Error processing pizza {pizza}: {str(e)}")
+                            raise
+
+                    # Create pagination info
+                    total_count = len(all_pizzas)
+                    total_pages = (total_count + page_size - 1) // page_size
+                    pagination_info = PaginationInfo(
+                        page=page,
+                        page_size=page_size,
+                        total_count=total_count,
+                        total_pages=total_pages,
+                        has_next=end_idx < total_count,
+                        has_prev=page > 1
+                    )
+
+                except Exception as e:
+                    logger.error(f"Error in pizzas processing: {str(e)}")
+                    raise
+
+                # Get extras (drinks & desserts) for customers
+                try:
+                    logger.debug("Calling MenuView.get_extras_with_prices()")
+                    extras_data = MenuView.get_extras_with_prices()
+                    logger.debug(f"Retrieved {len(extras_data)} extras")
+
+                    # Convert extras to ExtraInfo objects
+                    extras_info_list = []
+                    for extra in extras_data:
+                        try:
+                            logger.debug(f"Processing extra: {extra['name']}, id: {extra.get('id')}, price: {extra.get('price')}, type: {extra.get('type')}")
+                            extra_info = ExtraInfo(
+                                id=extra['id'],
+                                name=extra['name'],
+                                price=extra['price'],
+                                type=extra['type']
+                            )
+                            extras_info_list.append(extra_info)
+                        except Exception as e:
+                            logger.error(f"Error processing extra {extra}: {str(e)}")
+                            logger.error(f"Extra data: {extra}")
+                            raise
+                except Exception as e:
+                    logger.error(f"Error in extras processing: {str(e)}")
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    raise
+
+                return CustomerSpecificResponse(
+                    message="Customer dashboard",
+                    user_type="customer",
+                    user_id=user.id,
+                    username=user.username,
+                    email=user.email,
+                    loyalty_points=user.loyalty_points,
+                    birthday_order=user.birthday_order,
+                    available_pizzas=pizza_info_list,
+                    pizza_pagination=pagination_info,
+                    available_extras=extras_info_list
+                )
+
+            elif isinstance(user, Employee):
+                # Get all customers for employees
+                logger.debug("Getting all customers for employee dashboard")
+                customers = list(Customer.select())
+                logger.debug(f"Retrieved {len(customers)} customers")
+                customer_info_list = [
+                    CustomerInfo(
+                        id=customer.id,
+                        username=customer.username,
+                        email=customer.email
+                    ) for customer in customers
+                ]
+
+                return EmployeeSpecificResponse(
+                    message="Employee dashboard",
+                    user_type="employee",
+                    user_id=user.id,
+                    username=user.username,
+                    email=user.email,
+                    position=user.position,
+                    salary=user.salary,
+                    customers=customer_info_list
+                )
+
+            elif isinstance(user, DeliveryPerson):
+                # Get orders for delivery person
+                orders = QueryManager.get_orders_by_user(user.id)
+                order_info_list = [
+                    OrderInfo(
+                        id=order.id,
+                        status=order.status,
+                        created_at=order.created_at.isoformat() if order.created_at else "",
+                        postal_code=order.postalCode
+                    ) for order in orders
+                ]
+
+                return DeliveryPersonSpecificResponse(
+                    message="Delivery person dashboard",
+                    user_type="delivery_person",
+                    user_id=user.id,
+                    username=user.username,
+                    email=user.email,
+                    position=user.position,
+                    salary=user.salary,
+                    status=user.status,
+                    orders=order_info_list
+                )
+
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Unknown user type"
+                )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get_user_dashboard: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve dashboard information"
+        )
+
+@router.get("/employee/{user_id}", response_model=EmployeeSpecificResponse)
+async def get_employee_info(user_id: int):
+    """Get employee information by user ID without authentication"""
+    try:
+        with db_session:
+            # Get the user from database
+            user = User.get(id=user_id)
+            if not user or not isinstance(user, Employee):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Employee not found"
+                )
+
+        return EmployeeSpecificResponse(
+            message="Employee information",
+            user_type="employee",
+            user_id=user.id,
+            username=user.username,
+            email=user.email,
+            position=user.position,
+            salary=user.salary
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get_employee_info: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve employee information"
+        )
+
+@router.get("/delivery-person/{user_id}", response_model=DeliveryPersonSpecificResponse)
+async def get_delivery_person_info(user_id: int):
+    """Get delivery person information by user ID without authentication"""
+    try:
+        with db_session:
+            # Get the user from database
+            user = User.get(id=user_id)
+            if not user or not isinstance(user, DeliveryPerson):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Delivery person not found"
+                )
+
+        return DeliveryPersonSpecificResponse(
+            message="Delivery person information",
+            user_type="delivery_person",
+            user_id=user.id,
+            username=user.username,
+            email=user.email,
+            position=user.position,
+            salary=user.salary,
+            status=user.status
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get_delivery_person_info: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve delivery person information"
+        )
+
+@router.get("/pizzas-paginated", response_model=PaginatedPizzaResponse)
+async def get_pizzas_paginated(
+    page: int = 1,
+    page_size: int = 10
+):
+    """Get pizzas with pagination and prices. Accessible without authentication."""
+    try:
+        # Validate pagination parameters
+        if page < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Page number must be greater than 0"
+            )
+
+        if page_size < 1 or page_size > 100:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Page size must be between 1 and 100"
+            )
+
+        # Get paginated pizzas
+        pizzas_data = QueryManager.get_pizzas_paginated(page=page, page_size=page_size)
+
+        # Convert pizzas to PizzaInfo objects
+        pizza_info_list = []
+        for pizza in pizzas_data["pizzas"]:
+            # Calculate pizza price using QueryManager
+            price = QueryManager.calculate_pizza_price(pizza.id)
+
+            # Get dietary type (default to normal for now)
+            dietary_type = "normal"
+
+            pizza_info = PizzaInfo(
+                id=pizza.id,
+                name=pizza.name,
+                description=pizza.description if hasattr(pizza, 'description') else None,
+                price=price,
+                dietary_type=dietary_type,
+                stock=pizza.stock,
+                ingredients=[]  # Empty ingredients list for now
+            )
+            pizza_info_list.append(pizza_info)
+
+        # Create pagination info
+        pagination_info = PaginationInfo(**pizzas_data["pagination"])
+
+        return PaginatedPizzaResponse(
+            pizzas=pizza_info_list,
+            pagination=pagination_info
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get_pizzas_paginated: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve paginated pizzas"
+        )
+
+@router.post("/order-multiple-pizzas/{user_id}", response_model=MultiplePizzaOrderResponse, status_code=status.HTTP_201_CREATED)
+async def order_multiple_pizzas(
+    user_id: int,
+    request: MultiplePizzaOrderRequest
+):
+    """Create an order with multiple pizzas for a specific user without authentication."""
+    try:
+        logger.debug(f"User {user_id} attempting to order multiple pizzas")
+        logger.debug(f"Request data: {request}")
+
+        # Validate pizza quantities
+        if not request.pizza_quantities:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least one pizza must be ordered"
+            )
+
+        # Convert PizzaQuantity objects to [pizza_id, quantity] pairs for QueryManager
+        pizza_quantities_list = [[pq.pizza_id, pq.quantity] for pq in request.pizza_quantities]
+
+        with db_session:
+            # Verify user exists and is a customer
+            customer = Customer.get(id=user_id)
+            if not customer:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Customer not found"
+                )
+
+            # Create the order using QueryManager
+            order = QueryManager.create_multiple_pizza_order(
+                user_id=customer.id,
+                pizza_quantities=pizza_quantities_list,
+                extra_ids=request.extra_ids,
+                discount_code=request.discount_code,
+                postal_code=request.postal_code
+            )
+
+            logger.info(f"Successfully created order {order.id} for customer {customer.username}")
+
+            # Get order confirmation details
+            order_details = QueryManager.get_order_confirmation(order.id)
+            if not order_details:
+                # This shouldn't happen if the order was just created
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to retrieve order confirmation"
+                )
+
+            # Create response
+            response = MultiplePizzaOrderResponse(
+                order_id=order.id,
+                status=order.status,
+                message="Order created successfully",
+                total_price=order_details["total_price"],
+                items=[
+                    OrderItemInfo(
+                        type=item["type"],
+                        name=item["name"],
+                        quantity=item["quantity"],
+                        unit_price=item["unit_price"],
+                        subtotal=item["subtotal"]
+                    ) for item in order_details["items"]
+                ],
+                discount=(
+                    DiscountInfo(
+                        code=order_details["discount"]["code"],
+                        percentage=order_details["discount"].get("percentage", 0.0),
+                        amount=order_details["discount"]["amount"]
+                    ) if order_details["discount"] else None
+                ),
+                created_at=order.created_at.isoformat() if order.created_at else "",
+                postal_code=order.postalCode
+            )
+
+            logger.debug(f"Created response for order {order.id}")
+            return response
+
+    except ValueError as e:
+        # Handle specific validation errors from QueryManager
+        error_message = str(e)
+        status_code = status.HTTP_400_BAD_REQUEST
+
+        # Check for specific error types to return appropriate status codes
+        if "not found" in error_message.lower():
+            if "pizza" in error_message.lower():
+                status_code = status.HTTP_404_NOT_FOUND
+            elif "extra" in error_message.lower():
+                status_code = status.HTTP_404_NOT_FOUND
+            elif "user" in error_message.lower():
+                status_code = status.HTTP_401_UNAUTHORIZED
+        elif "insufficient stock" in error_message.lower():
+            status_code = status.HTTP_400_BAD_REQUEST
+        elif "must be positive" in error_message.lower():
+            status_code = status.HTTP_400_BAD_REQUEST
+        elif "postal code" in error_message.lower():
+            status_code = status.HTTP_400_BAD_REQUEST
+
+        logger.error(f"Validation error in order_multiple_pizzas: {error_message}")
+        raise HTTPException(
+            status_code=status_code,
+            detail=error_message
+        )
+
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+
+    except Exception as e:
+        # Handle unexpected errors
+        logger.error(f"Unexpected error in order_multiple_pizzas: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create order due to an internal error"
         )

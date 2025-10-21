@@ -524,6 +524,44 @@ async def get_discount_code_details(code: str):
             detail="Failed to retrieve discount code details"
         )
 
+@router.post("/discounts/create", response_model=Dict[str, str])
+async def create_discount_code():
+    """Create a new discount code and return it"""
+    try:
+        logger.debug("Creating new discount code from public endpoint")
+        
+        with db_session:
+            # Generate a random discount code
+            import secrets
+            code = secrets.token_hex(8).upper()
+            
+            # Set validity period (30 days from now)
+            from datetime import datetime, timedelta
+            now = datetime.now()
+            valid_until = now + timedelta(days=30)
+            
+            # Create discount code with 10% discount
+            discount_code = DiscountCode(
+                code=code,
+                percentage=10.0,
+                valid_from=now,
+                valid_until=valid_until,
+                used=False
+            )
+            
+            commit()
+            
+            logger.debug(f"Created discount code: {code}")
+            return {"code": code}
+            
+    except Exception as e:
+        logger.error(f"Error creating discount code: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create discount code"
+        )
+
 # Reports endpoints
 @router.get("/reports/earnings/gender/{gender}", response_model=EarningsReport)
 async def get_earnings_by_gender(gender: str):

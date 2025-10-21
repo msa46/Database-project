@@ -1,5 +1,7 @@
 from typing import Union
 import logging
+import os
+from dotenv import load_dotenv
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +11,9 @@ from src.router.auth import router as auth_router
 from src.router.secured import router as secured_router
 from src.router.public import router as public_router
 from src.router.publicauth import router as publicauth_router
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -21,9 +26,13 @@ app = FastAPI(
 )
 
 # Configure CORS
+cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+# Split the comma-separated string into a list
+allow_origins_list = [origin.strip() for origin in cors_origins.split(",")]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],  # Allow both localhost and 127.0.0.1
+    allow_origins=allow_origins_list,  # Use environment variable or default to localhost:3000 and 127.0.0.1:3000
     allow_credentials=True,  # Changed to True to support credentials if needed
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Explicitly list methods
     allow_headers=["*"],  # Allow all headers

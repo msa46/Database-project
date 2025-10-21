@@ -707,6 +707,10 @@ class QueryManager:
                     'amount': round(discount_amount, 2)
                 }
 
+            # Apply discount to total
+            if discount_info:
+                total -= discount_info['amount']
+
         return {
             'total_price': round(total, 2),
             'items': items,
@@ -1051,9 +1055,27 @@ class QueryManager:
             delivery_person.status = DeliveryStatus.On_Delivery
             logger.info(f"Updated delivery person {delivery_person.username} status to On_Delivery")
         
-        # TODO: Apply discount code validation if provided
+        # Apply discount code if provided
         if discount_code:
-            logger.info(f"Discount code provided: {discount_code} (validation not implemented)")
+            logger.info(f"Processing discount code: {discount_code}")
+            # Get discount code details using existing query
+            dc_details = QueryManager.get_discount_code_details(discount_code)
+            
+            if not dc_details or not dc_details.get('is_valid'):
+                raise ValueError(f"Invalid or expired discount code: {discount_code}")
+            
+            dc = DiscountCode.get(code=discount_code)
+            if not dc:
+                raise ValueError(f"Discount code not found: {discount_code}")
+            
+            # Associate discount code with user
+            user.discount_code = dc
+            
+            # Mark discount code as used if it's a one-time use
+            if dc.percentage == 0.0:  # Birthday codes are one-time use
+                dc.used = True
+                dc.used_by = user
+                logger.info(f"Marked birthday discount code {discount_code} as used by user {user.username}")
         
         commit()
         return order

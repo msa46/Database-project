@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any, Union
-from pony.orm import db_session
+from pony.orm import db_session, commit
 import logging
 import traceback
 
@@ -170,11 +170,20 @@ async def get_all_pizzas():
         
         pizza_list = []
         for pizza in pizzas:
+            # Calculate pizza price
+            price = QueryManager.calculate_pizza_price(pizza.id)
+            
+            # Determine dietary type (default to normal for now)
+            dietary_type = "normal"
+            
             pizza_info = PizzaInfo(
                 id=pizza.id,
                 name=pizza.name,
                 description=pizza.description if hasattr(pizza, 'description') else None,
-                stock=pizza.stock
+                price=price,
+                dietary_type=dietary_type,
+                stock=pizza.stock,
+                ingredients=[]  # Empty ingredients list for this endpoint
             )
             pizza_list.append(pizza_info)
         
@@ -198,11 +207,17 @@ async def get_vegan_pizzas():
         
         pizza_list = []
         for pizza in pizzas:
+            # Calculate pizza price
+            price = QueryManager.calculate_pizza_price(pizza.id)
+            
             pizza_info = PizzaInfo(
                 id=pizza.id,
                 name=pizza.name,
                 description=pizza.description if hasattr(pizza, 'description') else None,
-                stock=pizza.stock
+                price=price,
+                dietary_type="vegan",
+                stock=pizza.stock,
+                ingredients=[]  # Empty ingredients list for this endpoint
             )
             pizza_list.append(pizza_info)
         
@@ -226,11 +241,17 @@ async def get_vegetarian_pizzas():
         
         pizza_list = []
         for pizza in pizzas:
+            # Calculate pizza price
+            price = QueryManager.calculate_pizza_price(pizza.id)
+            
             pizza_info = PizzaInfo(
                 id=pizza.id,
                 name=pizza.name,
                 description=pizza.description if hasattr(pizza, 'description') else None,
-                stock=pizza.stock
+                price=price,
+                dietary_type="vegetarian",
+                stock=pizza.stock,
+                ingredients=[]  # Empty ingredients list for this endpoint
             )
             pizza_list.append(pizza_info)
         

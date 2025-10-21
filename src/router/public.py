@@ -267,6 +267,7 @@ async def get_vegetarian_pizzas():
         )
 
 @router.get("/pizzas/{pizza_id}/ingredients", response_model=List[IngredientInfo])
+@db_session
 async def get_pizza_ingredients(pizza_id: int):
     """Get ingredients for a specific pizza without authentication"""
     try:
@@ -671,9 +672,18 @@ async def get_top_3_pizzas_past_month():
         
         pizza_list = []
         for item in top_pizzas:
+            # Handle both ORM objects and dictionaries
+            pizza = item['pizza']
+            if hasattr(pizza, 'id'):
+                pizza_id = pizza.id
+                pizza_name = pizza.name
+            else:
+                pizza_id = pizza.get('id')
+                pizza_name = pizza.get('name')
+                
             pizza_info = TopPizzaInfo(
-                pizza_id=item['pizza'].id,
-                pizza_name=item['pizza'].name,
+                pizza_id=pizza_id,
+                pizza_name=pizza_name,
                 total_quantity=item['total_quantity']
             )
             pizza_list.append(pizza_info)

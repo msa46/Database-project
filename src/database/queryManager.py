@@ -1181,14 +1181,22 @@ class QueryManager:
         """Get the top 3 pizzas sold in the past month by quantity."""
         past_month = datetime.now() - timedelta(days=30)
         # Get all orders in the past month and aggregate pizza quantities
-        all_orders = list(Order.select(lambda o: o.created_at >= past_month))
+        all_orders = list(Order.select())
+        filtered_orders = [o for o in all_orders if o.created_at >= past_month]
         pizza_sales = {}
         
-        for order in all_orders:
+        for order in filtered_orders:
             for opr in order.pizza_relations:
                 pizza_id = opr.pizza.id
                 if pizza_id not in pizza_sales:
-                    pizza_sales[pizza_id] = {'pizza': opr.pizza, 'quantity': 0}
+                    pizza_sales[pizza_id] = {
+                        'pizza': {
+                            'id': opr.pizza.id,
+                            'name': opr.pizza.name,
+                            'description': getattr(opr.pizza, 'description', None)
+                        },
+                        'quantity': 0
+                    }
                 pizza_sales[pizza_id]['quantity'] += opr.quantity
         
         # Sort by quantity and get top 3
